@@ -1,0 +1,5 @@
+for i in 50 100 200 300 400 600 800 1000
+do
+python task-image-classification.py --devices 3 --data_length $i --epoch 100 --n_layer 3 --n_rec 512 --method expsm_diag --etrace_decay 0.9 --vjp_time t_minus_1 --model lif-delta --exp_name test1  --warmup_ratio 0.
+done
+
