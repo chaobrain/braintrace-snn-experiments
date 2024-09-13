@@ -476,9 +476,6 @@ class Trainer(object):
       model = bnn.DiagIODimAlgorithm(
         _single_step,
         self.args.etrace_decay,
-        num_snap=self.args.num_snap,
-        snap_freq=self.args.snap_freq,
-        diag_jacobian=self.args.diag_jacobian,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
         vjp_time=self.args.vjp_time,
       )
@@ -486,7 +483,6 @@ class Trainer(object):
     elif self.args.method == 'diag':
       model = bnn.DiagParamDimAlgorithm(
         _single_step,
-        diag_jacobian=self.args.diag_jacobian,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
         vjp_time=self.args.vjp_time,
       )
@@ -495,9 +491,6 @@ class Trainer(object):
       model = bnn.DiagHybridDimAlgorithm(
         _single_step,
         self.args.etrace_decay,
-        num_snap=self.args.num_snap,
-        snap_freq=self.args.snap_freq,
-        diag_jacobian=self.args.diag_jacobian,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
         vjp_time=self.args.vjp_time,
       )
@@ -568,9 +561,6 @@ class Trainer(object):
       model = bnn.DiagIODimAlgorithm(
         _single_step,
         self.args.etrace_decay,
-        num_snap=self.args.num_snap,
-        snap_freq=self.args.snap_freq,
-        diag_jacobian=self.args.diag_jacobian,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
         vjp_time=self.args.vjp_time,
       )
@@ -578,7 +568,6 @@ class Trainer(object):
     elif self.args.method == 'diag':
       model = bnn.DiagParamDimAlgorithm(
         _single_step,
-        diag_jacobian=self.args.diag_jacobian,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
         vjp_time=self.args.vjp_time,
       )
@@ -587,9 +576,6 @@ class Trainer(object):
       model = bnn.DiagHybridDimAlgorithm(
         _single_step,
         self.args.etrace_decay,
-        num_snap=self.args.num_snap,
-        snap_freq=self.args.snap_freq,
-        diag_jacobian=self.args.diag_jacobian,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
         vjp_time=self.args.vjp_time,
       )

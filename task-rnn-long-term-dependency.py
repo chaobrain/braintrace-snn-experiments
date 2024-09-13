@@ -128,7 +128,7 @@ class _CopyDataset(IterableDataset):
       yield x, ids[:10]
 
 
-def _get_copying_task_for_rnn(args, cache_dir):
+def _get_copying_task_for_rnn(args):
   dataset = _CopyDataset(args.data_length)
   generator = DataLoader(dataset, batch_size=args.batch_size)
   args.warmup_ratio = int(args.data_length + 10)
@@ -146,7 +146,7 @@ def get_rnn_data(args, cache_dir=os.path.expanduser("./data")):
   data_to_fun = {
     'copying': _get_copying_task_for_rnn,
   }
-  ret = data_to_fun[args.dataset.lower()](args, cache_dir)
+  ret = data_to_fun[args.dataset.lower()](args)
   return ret
 
 
@@ -250,7 +250,6 @@ class Trainer(object):
 
     # calculate the loss
     loss = self._loss(out, targets)
-    # jax.debug.print('loss {loss}', loss=loss)
     return loss, (out, None)
 
   def _etrace_train(self, model, indices, inputs, targets):
@@ -301,10 +300,7 @@ class Trainer(object):
       model = bnn.DiagIODimAlgorithm(
         model,
         self.args.etrace_decay,
-        num_snap=self.args.num_snap,
-        snap_freq=self.args.snap_freq,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
-        diag_jacobian=self.args.diag_jacobian,
         vjp_time=self.args.vjp_time,
       )
       model.compile_graph(0, jax.ShapeDtypeStruct(inputs.shape[1:], inputs.dtype))
@@ -312,7 +308,6 @@ class Trainer(object):
       model = bnn.DiagParamDimAlgorithm(
         model,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
-        diag_jacobian=self.args.diag_jacobian,
         vjp_time=self.args.vjp_time,
       )
       model.compile_graph(0, jax.ShapeDtypeStruct(inputs.shape[1:], inputs.dtype))
@@ -320,15 +315,14 @@ class Trainer(object):
       model = bnn.DiagHybridDimAlgorithm(
         model,
         self.args.etrace_decay,
-        num_snap=self.args.num_snap,
-        snap_freq=self.args.snap_freq,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
-        diag_jacobian=self.args.diag_jacobian,
         vjp_time=self.args.vjp_time,
       )
       model.compile_graph(0, jax.ShapeDtypeStruct(inputs.shape[1:], inputs.dtype))
     else:
       raise ValueError(f'Unknown online learning methods: {self.args.method}.')
+
+    model.graph.show_graph()
 
     # running indices
     indices = np.arange(inputs.shape[0])
@@ -403,7 +397,7 @@ class Trainer(object):
         print(f'Training {i:5d}, loss = {float(r):.8f}', file=f)
         bar.set_description(f'Training {i:5d}, loss = {float(r):.5f}', refresh=True)
 
-        # self.target.save_state(i)
+        self.target.save_state(i)
 
 
 def network_training():
@@ -415,10 +409,7 @@ def network_training():
 
   # get file path to output
   now = time.strftime('%Y-%m-%d %H-%M-%S', time.localtime(int(round(time.time() * 1000)) / 1000))
-  if args.method == 'bptt':
-    filepath = f'figs/{args.model} {args.method} {args.dataset}/{now}'
-  else:
-    filepath = f'figs/{args.model} {args.method} {args.diag_jacobian} {args.dataset}/{now}'
+  filepath = f'figs/{args.model} {args.method} {args.dataset}/{now}'
 
   # loading the data
   dataset = get_rnn_data(args)

@@ -41,7 +41,6 @@ parser.add_argument("--drop_last", type=int, default=0, help="")
 
 # training parameters
 parser.add_argument("--exp_name", type=str, default='', help="")
-parser.add_argument("--spk_fun", type=str, default='s2nn', help="spike surrogate gradient function.")
 parser.add_argument("--warmup_ratio", type=float, default=0.0, help="The ratio for network simulation.")
 parser.add_argument("--optimizer", type=str, default='adam', help="")
 parser.add_argument("--filepath", type=str, default='', help="The name for the current experiment.")
@@ -64,11 +63,20 @@ parser.add_argument("--n_layer", type=int, default=2, help="Number of recurrent 
 parser.add_argument("--V_th", type=float, default=1.)
 parser.add_argument("--tau_mem_sigma", type=float, default=1.)
 parser.add_argument("--tau_mem", type=float, default=10.)
-parser.add_argument("--tau_syn", type=float, default=10.)
+
 parser.add_argument("--tau_o", type=float, default=10.)
 parser.add_argument("--ff_scale", type=float, default=10.)
 parser.add_argument("--rec_scale", type=float, default=2.)
 parser.add_argument("--spk_reset", type=str, default='soft')
+
+__args, _ = parser.parse_known_args()
+if __args.model.startswith('alif'):
+  parser.add_argument("--tau_a", type=float, default=100.)
+  parser.add_argument("--beta", type=float, default=1.)
+
+if __args.model.startswith('lif-exp-cu'):
+  parser.add_argument("--tau_syn", type=float, default=10.)
+
 
 global_args = parser.parse_args()
 
@@ -188,6 +196,37 @@ class _LIF_Delta_Dense_Layer(bst.Module):
     return self.neu.get_spike()
 
 
+class _ALIF_Delta_Dense_Layer(bst.Module):
+  """
+  LIF neurons and dense connected delta synapses.
+  """
+
+  def __init__(
+      self,
+      n_in, n_rec,
+      tau_mem=5.,
+      tau_a=100.,
+      V_th=1.,
+      beta=1.,
+      spk_fun: Callable = bst.surrogate.ReluGrad(),
+      spk_reset: str = 'soft',
+      rec_scale: float = 1.,
+      ff_scale: float = 1.,
+  ):
+    super().__init__()
+    self.neu = bnn.ALIF(n_rec, tau=tau_mem, tau_a=tau_a, beta=beta, spk_fun=spk_fun, spk_reset=spk_reset, V_th=V_th)
+    rec_init: Callable = bst.init.KaimingNormal(rec_scale)
+    ff_init: Callable = bst.init.KaimingNormal(ff_scale)
+    w_init = jnp.concat([ff_init([n_in, n_rec]), rec_init([n_rec, n_rec])], axis=0)
+    self.syn = bst.nn.HalfProjDelta(bnn.Linear(n_in + n_rec, n_rec, w_init=w_init), self.neu)
+
+  def update(self, spk):
+    inp = jnp.concat([spk, self.neu.get_spike()], axis=-1)
+    self.syn(inp)
+    self.neu()
+    return self.neu.get_spike()
+
+
 class _LIF_ExpCu_Dense_Layer(bst.Module):
   """
   LIF neurons and dense connected exponential current synapses.
@@ -235,36 +274,39 @@ class ETraceNet(bst.Module):
     self.n_rec = n_rec
     self.n_out = n_out
     self.n_layer = args.n_layer
-
-    if args.spk_fun == 's2nn':
-      spk_fun = bst.surrogate.S2NN()
-    elif args.spk_fun == 'relu':
-      spk_fun = bst.surrogate.ReluGrad()
-    elif args.spk_fun == 'multi_gaussian':
-      spk_fun = bst.surrogate.MultiGaussianGrad()
-    else:
-      raise ValueError('Unknown spiking surrogate gradient function.')
+    spk_fun = bst.surrogate.ReluGrad()
 
     # recurrent layers
     self.rec_layers = bst.visible_module_list()
     for layer_idx in range(n_layer):
-      tau_mem = (bst.random.normal(args.tau_mem, args.tau_mem_sigma, [n_rec])
-                 if args.tau_mem_sigma > 0. else
-                 args.tau_mem)
+      tau_mem = (
+        bst.random.normal(args.tau_mem, args.tau_mem_sigma, [n_rec])
+        if args.tau_mem_sigma > 0. else
+        args.tau_mem
+      )
+      tau_mem = bu.math.maximum(tau_mem, 0.)
+
       if args.model == 'lif-exp-cu':
         rec = _LIF_ExpCu_Dense_Layer(
           n_rec=n_rec, n_in=n_in, tau_mem=tau_mem, tau_syn=args.tau_syn, V_th=args.V_th,
-          spk_fun=spk_fun, spk_reset=args.spk_reset,
-          rec_scale=args.rec_scale, ff_scale=args.ff_scale,
+          spk_fun=spk_fun, spk_reset=args.spk_reset, rec_scale=args.rec_scale, ff_scale=args.ff_scale,
         )
         n_in = n_rec
+
       elif args.model == 'lif-delta':
         rec = _LIF_Delta_Dense_Layer(
           n_rec=n_rec, n_in=n_in, tau_mem=tau_mem, V_th=args.V_th,
-          spk_fun=spk_fun, spk_reset=args.spk_reset,
-          rec_scale=args.rec_scale, ff_scale=args.ff_scale,
+          spk_fun=spk_fun, spk_reset=args.spk_reset, rec_scale=args.rec_scale, ff_scale=args.ff_scale,
         )
         n_in = n_rec
+
+      elif args.model == 'alif-delta':
+        rec = _ALIF_Delta_Dense_Layer(
+          n_rec=n_rec, n_in=n_in, tau_mem=tau_mem, V_th=args.V_th, tau_a=args.tau_a, beta=args.beta,
+          spk_fun=spk_fun, spk_reset=args.spk_reset, rec_scale=args.rec_scale, ff_scale=args.ff_scale,
+        )
+        n_in = n_rec
+
       else:
         raise ValueError('Unknown neuron model.')
 
@@ -482,9 +524,6 @@ class Trainer(object):
       model = bnn.DiagIODimAlgorithm(
         _single_step,
         self.args.etrace_decay,
-        num_snap=self.args.num_snap,
-        snap_freq=self.args.snap_freq,
-        diag_jacobian=self.args.diag_jacobian,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
         vjp_time=self.args.vjp_time,
       )
@@ -492,7 +531,6 @@ class Trainer(object):
     elif self.args.method == 'diag':
       model = bnn.DiagParamDimAlgorithm(
         _single_step,
-        diag_jacobian=self.args.diag_jacobian,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
         vjp_time=self.args.vjp_time,
       )
@@ -501,9 +539,6 @@ class Trainer(object):
       model = bnn.DiagHybridDimAlgorithm(
         _single_step,
         self.args.etrace_decay,
-        num_snap=self.args.num_snap,
-        snap_freq=self.args.snap_freq,
-        diag_jacobian=self.args.diag_jacobian,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
         vjp_time=self.args.vjp_time,
       )
@@ -574,9 +609,6 @@ class Trainer(object):
       model = bnn.DiagIODimAlgorithm(
         _single_step,
         self.args.etrace_decay,
-        num_snap=self.args.num_snap,
-        snap_freq=self.args.snap_freq,
-        diag_jacobian=self.args.diag_jacobian,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
         vjp_time=self.args.vjp_time,
       )
@@ -584,7 +616,6 @@ class Trainer(object):
     elif self.args.method == 'diag':
       model = bnn.DiagParamDimAlgorithm(
         _single_step,
-        diag_jacobian=self.args.diag_jacobian,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
         vjp_time=self.args.vjp_time,
       )
@@ -593,9 +624,6 @@ class Trainer(object):
       model = bnn.DiagHybridDimAlgorithm(
         _single_step,
         self.args.etrace_decay,
-        num_snap=self.args.num_snap,
-        snap_freq=self.args.snap_freq,
-        diag_jacobian=self.args.diag_jacobian,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
         vjp_time=self.args.vjp_time,
       )
@@ -723,7 +751,8 @@ class Trainer(object):
             loss, acc, mem = self.bptt_train(x_local, y_local)
           elif self.args.memory_eval:
             loss, acc, mem = self.memory_efficient_etrace_train(
-              reset_fun, pred_fun, train_fun, x_local, y_local)
+              reset_fun, pred_fun, train_fun, x_local, y_local
+            )
           else:
             loss, acc, mem = self.etrace_train(x_local, y_local)
           t = time.time() - t0
@@ -734,11 +763,11 @@ class Trainer(object):
           epoch_time.append(t)
           epoch_mem.append(mem)
 
-        mean_loss = np.mean(epoch_loss)
+        mean_loss_train = np.mean(epoch_loss)
         mean_acc = np.mean(epoch_acc)
         mean_time = np.mean(epoch_time[1:-1])
         mean_mem = np.mean(epoch_mem[1:-1])
-        self.print(f'Epoch {epoch:4d}, training loss = {mean_loss:.8f}, '
+        self.print(f'Epoch {epoch:4d}, training loss = {mean_loss_train:.8f}, '
                    f'training acc = {mean_acc:.6f}, time = {mean_time:.5f} s, '
                    f'memory = {mean_mem:.2f} GB')
         self.opt.lr.step_epoch()
@@ -763,6 +792,11 @@ class Trainer(object):
         self.print(f'Epoch {epoch:4d}, testing loss = {mean_loss:.8f}, '
                    f'testing acc = {mean_acc:.6f}')
         self.print('')
+
+        if mean_loss == np.nan:
+          self.print('Loss is NaN. Stop training.')
+          break
+
     finally:
       self.file.close()
 
@@ -967,22 +1001,20 @@ def network_training():
     aim = f'image-classify/{global_args.exp_name}' if global_args.exp_name else 'memory-speed-eval'
     now = time.strftime('%Y-%m-%d %H-%M-%S', time.localtime(int(round(time.time() * 1000)) / 1000))
     name = (
-      f'{global_args.model}-data={global_args.data_length}'
-      f'-optim={global_args.optimizer}-lr={global_args.lr}'
+      f'{global_args.model}-data={global_args.data_length}/'
+      f'optim={global_args.optimizer}-lr={global_args.lr}'
       f'-ffscale={global_args.ff_scale}-recscale={global_args.rec_scale}-{now}'
     )
     if global_args.method == 'bptt':
-      filepath = f'results/{aim}/{global_args.dataset} {global_args.method} {global_args.spk_fun}/{name}'
+      filepath = f'results/{aim}/{global_args.dataset} {global_args.method}/{name}'
     elif global_args.method == 'diag':
       filepath = (
-        f'results/{aim}/{global_args.dataset} {global_args.method} {global_args.vjp_time} '
-        f'{global_args.diag_jacobian} {global_args.diag_normalize} {global_args.spk_fun}/{name}'
+        f'results/{aim}/{global_args.dataset} {global_args.method} {global_args.vjp_time}/{name}'
       )
     else:
       filepath = (
         f'results/{aim}/{global_args.dataset} {global_args.method} {global_args.vjp_time} '
-        f'{global_args.diag_jacobian} {global_args.diag_normalize} '
-        f'decay={global_args.etrace_decay} {global_args.spk_fun}/{name}'
+        f'decay={global_args.etrace_decay}/{name}'
       )
 
   # loading the data
@@ -1035,3 +1067,8 @@ def network_training():
 if __name__ == '__main__':
   pass
   network_training()
+
+# python task-image-classification.py --devices 0 --dataset shd --data_length 400 --method bptt --epoch 100 --n_layer 3 --n_rec 512 --model lif-exp-cu --tau_syn 20 --tau_mem 100 --exp_name shd-400 --ff_scale 20.0 --rec_scale 1.0 --warmup_ratio 0.  --mode sim
+
+# python task-image-classification.py --devices 0 --dataset gesture --data_length 200 --epoch 100 --n_layer 3 --n_rec 256 --method bptt --model alif-delta --tau_a 400 --tau_mem 20. --exp_name test-alif-delta-gesture --warmup_ratio 0. --mode sim
+

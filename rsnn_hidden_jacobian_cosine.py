@@ -373,19 +373,21 @@ def _compare_jac_all_steps(model: bst.Module, inputs):
   return cos, spks
 
 
-def raster_plot(ts,
-                sp_matrix,
-                ax=None,
-                marker='.',
-                markersize=2,
-                color='k',
-                xlabel='Time (ms)',
-                ylabel='Neuron index',
-                xlim=None,
-                ylim=None,
-                title=None,
-                show=False,
-                **kwargs):
+def raster_plot(
+    ts,
+    sp_matrix,
+    ax=None,
+    marker='.',
+    markersize=2,
+    color='k',
+    xlabel='Time (ms)',
+    ylabel='Neuron index',
+    xlim=None,
+    ylim=None,
+    title=None,
+    show=False,
+    **kwargs
+):
   """Show the rater plot of the spikes.
 
   Parameters
@@ -593,9 +595,8 @@ def compare_jacobian_approx_on_real_dataset_v2(fn='analysis/jac_cosine_sim'):
      dict(rec_wscale=6, ff_wscale=100, tau_mem=5, kwargs=dict(tau_syn=5, tau_f=10, tau_d=100, tau_a=100))),
 
     ('gesture', None, LIF_Delta_Dense_Layer, dict(rec_wscale=0.1, ff_wscale=0.1, tau_mem=10.)),
-    (
-        'gesture', None, LIF_ExpCu_Dense_Layer,
-        dict(rec_wscale=4., ff_wscale=20., tau_mem=10., kwargs=dict(tau_syn=10.0))),
+    ('gesture', None, LIF_ExpCu_Dense_Layer,
+     dict(rec_wscale=4., ff_wscale=20., tau_mem=10., kwargs=dict(tau_syn=10.0))),
     ('gesture', None, LIF_STDExpCu_Dense_Layer,
      dict(rec_wscale=8., ff_wscale=20., tau_mem=10., kwargs=dict(tau_std=200.0, tau_syn=10.0))),
     ('gesture', None, LIF_STPExpCu_Dense_Layer,

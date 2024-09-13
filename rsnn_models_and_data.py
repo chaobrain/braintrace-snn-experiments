@@ -755,23 +755,42 @@ def _dvs_gesture_preprocessing(num_workers: int, n_step: int = 100):
     np.savez(f"{name}.npz", xs=xs, ys=ys, size=np.asarray(size, dtype=np.int32))
 
 
+# class FormattedDVSGesture:
+#   def __init__(self, filepath: str):
+#     self.filepath = filepath
+#     data = np.load(filepath, allow_pickle=True)
+#     self.xs = data['xs']
+#     self.ys = data['ys']
+#     self.size = data['size']
+#
+#   def __getitem__(self, idx):
+#     arr = np.zeros(tuple(self.size), dtype=bst.environ.dftype())
+#     arr[*self.xs[idx]] = 1.
+#     y = self.ys[idx]
+#     return arr, y
+#
+#   def __len__(self):
+#     return len(self.ys)
+
 class FormattedDVSGesture:
   def __init__(self, filepath: str):
     self.filepath = filepath
     data = np.load(filepath, allow_pickle=True)
     self.xs = data['xs']
     self.ys = data['ys']
-    self.size = data['size']
+    self.img_size = data['img_size']
 
   def __getitem__(self, idx):
-    arr = np.zeros(tuple(self.size), dtype=bst.environ.dftype())
-    arr[*self.xs[idx]] = 1.
+    arr = np.zeros(tuple(self.img_size), dtype=bst.environ.dftype())
+    indices = self.xs[idx]
+    time_indices = indices[:, 0]
+    neuron_indices = indices[:, 1]
+    arr[time_indices, neuron_indices] = 1.
     y = self.ys[idx]
     return arr, y
 
   def __len__(self):
     return len(self.ys)
-
 
 def _get_gesture_data(args, cache_dir):
   # The Dynamic Vision Sensor (DVS) Gesture (DVSGesture) dataset consists of 11 classes of hand gestures recorded
@@ -781,8 +800,8 @@ def _get_gesture_data(args, cache_dir):
   in_shape = DVSGesture.sensor_size
   out_shape = 11
   n_step = args.data_length
-  train_path = os.path.join(cache_dir, f"DVSGesture/DVSGesture-train-step={n_step}.npz")
-  test_path = os.path.join(cache_dir, f"DVSGesture/DVSGesture-test-step={n_step}.npz")
+  train_path = os.path.join(cache_dir, f"DVSGesture/DVSGesture-mlp-train-step={n_step}.npz")
+  test_path = os.path.join(cache_dir, f"DVSGesture/DVSGesture-mlp-test-step={n_step}.npz")
   if not os.path.exists(train_path) or not os.path.exists(test_path):
     _dvs_gesture_preprocessing(args.n_data_worker, n_step)
   else:

@@ -56,11 +56,16 @@ class MyArgumentParser(argparse.ArgumentParser):
 
     # training method
     if args.method != 'bptt':
-      self.add_argument("--diag_normalize", type=int, default=0, choices=[0, 1, 2],
-                        help="Normalize the diagonal jacobian (0 - None, 1 - True, 2 - False).")
-      self.add_argument("--diag_jacobian", type=str, default='exact', help="Normalize the diagonal jacobian.")
-      self.add_argument("--vjp_time", type=str, default='t', choices=['t', 't_minus_1'], help="")
+      self.add_argument(
+        "--diag_normalize", type=int, default=0, choices=[0, 1, 2],
+        help="Normalize the diagonal jacobian (0 - None, 1 - True, 2 - False)."
+      )
+      self.add_argument(
+        "--vjp_time", type=str, default='t', choices=['t', 't_minus_1'],
+        help="The VJP time,should be t or t-1."
+      )
       if args.method != 'diag':
-        self.add_argument("--etrace_decay", type=float, default=0.9, help="The time constant of eligibility trace ")
-        self.add_argument("--num_snap", type=int, default=0, help="The number of snap shoot.")
-        self.add_argument("--snap_freq", type=int, default=None, help="The frequency of snap shoot.")
+        self.add_argument(
+          "--etrace_decay", type=float, default=0.9,
+          help="The time constant of eligibility trace "
+        )

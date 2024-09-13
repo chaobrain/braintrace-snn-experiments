@@ -15,10 +15,11 @@
 
 import argparse
 import os.path
+import pickle
 import platform
 import time
 from functools import reduce
-from typing import Optional, Any, Dict, Callable, Union, Iterator
+from typing import Any, Callable, Union
 
 import numpy as np
 
@@ -31,23 +32,18 @@ parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate.")
 parser.add_argument("--batch_size", type=int, default=128, help="Batch size.")
 parser.add_argument("--epochs", type=int, default=10000, help="Number of training epochs.")
 parser.add_argument("--dt", type=float, default=1., help="The simulation time step.")
-parser.add_argument("--loss", type=str, default='cel', choices=['cel', 'mse'], help="Loss function.")
 
 # dataset
 parser.add_argument("--mode", type=str, default="train", choices=['train', 'sim'], help="The computing mode.")
-parser.add_argument("--dataset", type=str, default="dms", help="Choose between different datasets")
 parser.add_argument("--n_data_worker", type=int, default=1, help="Number of data loading workers (default: 4)")
 parser.add_argument("--t_delay", type=float, default=1e3, help="Deta delay length.")
 parser.add_argument("--t_fixation", type=float, default=500., help="")
 
 # training parameters
 parser.add_argument("--exp_name", type=str, default='', help="")
-parser.add_argument("--spk_fun", type=str, default='s2nn', help="spike surrogate gradient function.")
 parser.add_argument("--warmup_ratio", type=float, default=0.0, help="The ratio for network simulation.")
-parser.add_argument("--optimizer", type=str, default='adam', help="")
 parser.add_argument("--acc_th", type=float, default=0.95, help="")
 parser.add_argument("--filepath", type=str, default='', help="The name for the current experiment.")
-parser.add_argument("--lr_milestones", type=str, default='', help="The name for the current experiment.")
 
 # regularization parameters
 parser.add_argument("--spk_reg_factor", type=float, default=0.0, help="Spike regularization factor.")
@@ -59,10 +55,11 @@ parser.add_argument("--weight_L1", type=float, default=0.0, help="The weight L1 
 parser.add_argument("--weight_L2", type=float, default=0.0, help="The weight L2 regularization.")
 
 # GIF parameters
-parser.add_argument("--detach_spk", type=int, default=0, help="Number of recurrent neurons.")
+parser.add_argument("--diff_spike", type=int, default=0, help="0: False, 1: True.")
 parser.add_argument("--n_rec", type=int, default=200, help="Number of recurrent neurons.")
 parser.add_argument("--A2", type=float, default=-1.)
 parser.add_argument("--tau_I2", type=float, default=2000.)
+parser.add_argument("--tau_neu", type=float, default=20.)
 parser.add_argument("--tau_syn", type=float, default=10.)
 parser.add_argument("--tau_o", type=float, default=10.)
 parser.add_argument("--ff_scale", type=float, default=10.)
@@ -83,7 +80,6 @@ import brainunit as bu
 import brainpy_datasets as bd
 import jax
 import jax.numpy as jnp
-import orbax.checkpoint
 from torch.utils.data import DataLoader, IterableDataset
 from numba import njit
 
@@ -143,32 +139,6 @@ class ExponentialSmooth(object):
     return self.update(value)  # / (1. - self.decay ** (i + 1))
 
 
-class Checkpointer(orbax.checkpoint.CheckpointManager):
-  def __init__(
-      self,
-      directory: str,
-      max_to_keep: Optional[int] = None,
-      save_interval_steps: int = 1,
-      metadata: Optional[Dict[str, Any]] = None,
-  ):
-    options = orbax.checkpoint.CheckpointManagerOptions(
-      max_to_keep=max_to_keep,
-      save_interval_steps=save_interval_steps,
-      create=True
-    )
-    super().__init__(os.path.abspath(directory), options=options, metadata=metadata)
-
-  def save_data(self, args: PyTree, step: int, **kwargs):
-    return super().save(step, args=orbax.checkpoint.args.StandardSave(args), **kwargs)
-
-  def load_data(self, args: PyTree, step: int = None, **kwargs):
-    self.wait_until_finished()
-    step = self.latest_step() if step is None else step
-    tree = jax.tree_util.tree_map(orbax.checkpoint.utils.to_shape_dtype_struct, args)
-    args = orbax.checkpoint.args.StandardRestore(tree)
-    return super().restore(step, args=args, **kwargs)
-
-
 class GIF(bst.nn.Neuron):
   def __init__(
       self, size,
@@ -180,10 +150,9 @@ class GIF(bst.nn.Neuron):
       keep_size: bool = False,
       name: str = None,
       mode: bst.mixin.Mode = None,
-      detach_spk: bool = False
   ):
     super().__init__(size, keep_size=keep_size, name=name, mode=mode,
-                     spk_fun=spike_fun, spk_reset=spk_reset, detach_spk=detach_spk)
+                     spk_fun=spike_fun, spk_reset=spk_reset)
 
     # params
     self.V_rest = bst.init.param(V_rest, self.varshape, allow_none=False)
@@ -210,18 +179,22 @@ class GIF(bst.nn.Neuron):
   def update(self, x=0.):
     t = bst.environ.get('t')
     last_spk = self.get_spike()
-    last_spk = jax.lax.stop_gradient(last_spk) if self.detach_spk else last_spk
+    if global_args.diff_spike == 0:
+      last_spk = jax.lax.stop_gradient(last_spk)
     last_V = self.V.value - self.V_th_inf * last_spk
-    last_I2 = self.I2.value + self.A2 * last_spk
+    last_I2 = self.I2.value - self.A2 * last_spk
     I2 = bst.nn.exp_euler_step(self.dI2, last_I2, t)
     V = bst.nn.exp_euler_step(self.dV, last_V, t, I_ext=(x + I2))
     self.I2.value = I2
     self.V.value = V
-    return self.get_spike()
+    # output
+    inp = jax.nn.standardize(self.V.value - self.V_th_inf)
+    return inp
 
   def get_spike(self, V=None):
     V = self.V.value if V is None else V
-    return self.spk_fun((V - self.V_th_inf) / self.V_th_inf)
+    spk = self.spk_fun((V - self.V_th_inf) / self.V_th_inf)
+    return spk
 
 
 class GifNet(bst.Module):
@@ -229,6 +202,8 @@ class GifNet(bst.Module):
       self, num_in, num_rec, num_out, args, filepath: str = None
   ):
     super().__init__()
+
+    self.filepath = filepath
 
     ff_init = bst.init.KaimingNormal(scale=args.ff_scale)
     rec_init = bst.init.KaimingNormal(scale=args.rec_scale)
@@ -241,35 +216,13 @@ class GifNet(bst.Module):
     self.num_out = num_out
     self.ir2r = ir2r
     self.exp = bnn.Expon(num_rec, tau=args.tau_syn)
-    tau_I2 = jnp.concat(
-      [bst.random.uniform(1., 5., (num_rec // 2,)),
-       bst.random.uniform(args.tau_I2 * 0.5, args.tau_I2 * 1.5, (num_rec // 2,))],
-      axis=0
-    )
-    if args.spk_fun == 's2nn':
-      spike_fun = bst.surrogate.S2NN()
-    elif args.spk_fun == 's2nn2':
-      spike_fun = bst.surrogate.S2NN(alpha=8., beta=1.)
-    elif args.spk_fun == 'relu':
-      spike_fun = bst.surrogate.ReluGrad()
-    elif args.spk_fun == 'leaky_relu':
-      spike_fun = bst.surrogate.LeakyRelu()
-    elif args.spk_fun == 'inv_square':
-      spike_fun = bst.surrogate.InvSquareGrad(10.)
-    elif args.spk_fun == 'multi_gaussian':
-      spike_fun = bst.surrogate.MultiGaussianGrad()
-    else:
-      raise ValueError
-    self.r = GIF(num_rec, V_rest=0., V_th_inf=1., spike_fun=spike_fun, A2=args.A2, tau_I2=tau_I2,
-                 detach_spk=bool(args.detach_spk))
+    tau_I2 = bst.random.uniform(100., args.tau_I2 * 1.5, num_rec)
+    self.r = GIF(num_rec, V_rest=0., V_th_inf=1., spike_fun=bst.surrogate.ReluGrad(),
+                 A2=args.A2, tau=args.tau_neu, tau_I2=tau_I2)
     self.out = bnn.LeakyRateReadout(
       num_rec, num_out, tau=args.tau_o,
       w_init=bst.init.KaimingNormal(scale=args.ff_scale)
     )
-    if filepath is None:
-      self.checkpointer = None
-    else:
-      self.checkpointer = Checkpointer(filepath, max_to_keep=5)
 
   def membrane_reg(self, mem_low: float, mem_high: float, factor: float = 0.):
     loss = 0.
@@ -295,31 +248,92 @@ class GifNet(bst.Module):
       loss = loss * factor
     return loss
 
-  def save(self, step, **kwargs):
-    if self.checkpointer is not None:
-      states = self.states().subset(bst.ParamState).to_dict_values()
-      self.checkpointer.save_data(states, step, **kwargs)
+  def to_state_dict(self):
+    res = dict(
+      ir2r=self.ir2r.weight_op.value,
+      out=self.out.weight_op.value,
+      tau_I2=self.r.tau_I2,
+    )
+    return jax.tree.map(np.asarray, res)
 
-  def restore(self, step=None):
-    if self.checkpointer is not None:
-      states = self.states().subset(bst.ParamState)
-      values = self.checkpointer.load_data(states.to_dict_values(), step=step)
-      for k, v in values.items():
-        states[k].value = v
+  def from_state_dict(self, state_dict: dict):
+    state_dict = jax.tree.map(jnp.asarray, state_dict)
+    self.ir2r.weight_op.value = state_dict['ir2r']
+    self.out.weight_op.value = state_dict['out']
+    self.r.tau_I2 = state_dict['tau_I2']
+
+  def save(self, **kwargs):
+    if self.filepath is not None:
+      states = self.to_state_dict()
+      states.update(kwargs)
+      print(f'Saving the model to {self.filepath}/final_states.pkl ...')
+      with open(f'{self.filepath}/final_states.pkl', 'wb') as f:
+        pickle.dump(states, f)
+
+  def restore(self):
+    if self.filepath is not None:
+      print(f'Loading the model from {self.filepath}/final_states.pkl ...')
+      with open(f'{self.filepath}/final_states.pkl', 'rb') as f:
+        states = pickle.load(f)
+      self.from_state_dict(states)
 
   def update(self, spikes):
     cond = self.ir2r(jnp.concatenate([spikes, self.r.get_spike()], axis=-1))
-    ext = self.exp(cond)
-    return self.out(self.r(ext))
+    out = self.r(self.exp(cond))
+    return self.out(out)
 
-  def visualize_variables(self) -> dict:
-    neurons = tuple(self.nodes().subset(bst.nn.Neuron).unique().values())
-    outs = {
-      'out_v': self.out.r.value,
-      'rec_v': [l.V.value for l in neurons],
-      'rec_s': [l.get_spike() for l in neurons],
-    }
-    return outs
+  @bst.transform.jit(static_argnums=0)
+  def etrace_predict(self, inputs, targets):
+    bst.init_states(self, inputs.shape[1])
+
+    def _single_step(i, inp, fit: bool = True):
+      with bst.environ.context(i=i, t=i * bst.environ.get_dt(), fit=fit):
+        out = self.update(inp)
+      return out
+
+    # initialize the online learning model
+    if global_args.method == 'expsm_diag':
+      model = bnn.DiagIODimAlgorithm(
+        _single_step,
+        int(global_args.etrace_decay) if global_args.etrace_decay > 1. else global_args.etrace_decay,
+        diag_normalize=diag_norm_mapping[global_args.diag_normalize],
+        vjp_time=global_args.vjp_time,
+      )
+      model.compile_graph(0, jax.ShapeDtypeStruct(inputs.shape[1:], inputs.dtype))
+    elif global_args.method == 'diag':
+      model = bnn.DiagParamDimAlgorithm(
+        _single_step,
+        diag_normalize=diag_norm_mapping[global_args.diag_normalize],
+        vjp_time=global_args.vjp_time,
+      )
+      model.compile_graph(0, jax.ShapeDtypeStruct(inputs.shape[1:], inputs.dtype))
+    elif global_args.method == 'hybrid':
+      model = bnn.DiagHybridDimAlgorithm(
+        _single_step,
+        int(global_args.etrace_decay) if global_args.etrace_decay > 1. else global_args.etrace_decay,
+        diag_normalize=diag_norm_mapping[global_args.diag_normalize],
+        vjp_time=global_args.vjp_time,
+      )
+      model.compile_graph(0, jax.ShapeDtypeStruct(inputs.shape[1:], inputs.dtype))
+    else:
+      raise ValueError(f'Unknown online learning methods: {global_args.method}.')
+
+    model.graph.show_graph()
+
+    def _predict_step(i, inp):
+      out = model(i, inp, running_index=i)
+      etrace = model.get_etrace_of(self.ir2r.weight_op)
+      if global_args.method == 'diag':
+        etrace = jax.tree.map(lambda x: x[0], etrace)
+      elif global_args.method == 'expsm_diag':
+        etrace = jax.tree.map(lambda x: x[0], etrace)
+      mem = self.r.V.value
+      return out, etrace, mem
+
+    outs, etraces, mems = bst.transform.for_loop(_predict_step, np.arange(inputs.shape[0]), inputs)
+    n_sim = format_sim_epoch(global_args.warmup_ratio, inputs.shape[0])
+    acc = jnp.mean(jnp.equal(targets, jnp.argmax(jnp.mean(outs[n_sim:], axis=0), axis=1)))
+    return mems, acc, etraces
 
   def verify(self, dataloader, x_func, num_show=5, sps_inc=10., filepath=None):
     def _step(index, x):
@@ -398,9 +412,11 @@ class Trainer(object):
     super().__init__()
 
     self.filepath = filepath
-    if not os.path.exists(self.filepath):
-      os.makedirs(self.filepath, exist_ok=True)
-    self.file = open(f'{self.filepath}/loss.txt', 'w')
+    self.file = None
+    if filepath:
+      if not os.path.exists(self.filepath):
+        os.makedirs(self.filepath, exist_ok=True)
+      self.file = open(f'{self.filepath}/loss.txt', 'w')
 
     # exponential smoothing
     self.smoother = ExponentialSmooth(0.8)
@@ -411,27 +427,20 @@ class Trainer(object):
     # parameters
     self.args = arguments
 
-    # loss function
-    if self.args.loss == 'mse':
-      self.loss_fn = bts.metric.squared_error
-    elif self.args.loss == 'cel':
-      self.loss_fn = bts.metric.softmax_cross_entropy_with_integer_labels
-    else:
-      raise ValueError
-
     # optimizer
     self.opt = opt
     opt.register_trainable_weights(self.target.states().subset(bst.ParamState))
 
   def print(self, msg):
     print(msg)
-    print(msg, file=self.file)
+    if self.file is not None:
+      print(msg, file=self.file)
 
   def _acc(self, out, target):
     return jnp.mean(jnp.equal(target, jnp.argmax(jnp.mean(out, axis=0), axis=1)))
 
   def _loss(self, out, target):
-    loss = self.loss_fn(out, target).mean()
+    loss = bts.metric.softmax_cross_entropy_with_integer_labels(out, target).mean()
 
     # L1 regularization loss
     if self.args.weight_L1 != 0.:
@@ -468,10 +477,7 @@ class Trainer(object):
     if self.args.method == 'expsm_diag':
       model = bnn.DiagIODimAlgorithm(
         _single_step,
-        self.args.etrace_decay,
-        num_snap=self.args.num_snap,
-        snap_freq=self.args.snap_freq,
-        diag_jacobian=self.args.diag_jacobian,
+        int(self.args.etrace_decay) if self.args.etrace_decay > 1. else self.args.etrace_decay,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
         vjp_time=self.args.vjp_time,
       )
@@ -479,7 +485,6 @@ class Trainer(object):
     elif self.args.method == 'diag':
       model = bnn.DiagParamDimAlgorithm(
         _single_step,
-        diag_jacobian=self.args.diag_jacobian,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
         vjp_time=self.args.vjp_time,
       )
@@ -487,10 +492,7 @@ class Trainer(object):
     elif self.args.method == 'hybrid':
       model = bnn.DiagHybridDimAlgorithm(
         _single_step,
-        self.args.etrace_decay,
-        num_snap=self.args.num_snap,
-        snap_freq=self.args.snap_freq,
-        diag_jacobian=self.args.diag_jacobian,
+        int(self.args.etrace_decay) if self.args.etrace_decay > 1. else self.args.etrace_decay,
         diag_normalize=diag_norm_mapping[self.args.diag_normalize],
         vjp_time=self.args.vjp_time,
       )
@@ -498,7 +500,7 @@ class Trainer(object):
     else:
       raise ValueError(f'Unknown online learning methods: {self.args.method}.')
 
-    # model.graph.show_graph(start_frame=0, n_frame=5)
+    model.show_graph()
 
     def _etrace_grad(i, inp):
       # call the model
@@ -517,10 +519,9 @@ class Trainer(object):
 
     def _etrace_train(indices_, inputs_):
       # forward propagation
-      grads = jax.tree.map(lambda a: jnp.zeros_like(a), weights.to_dict_values())
+      grads = jax.tree.map(jnp.zeros_like, weights.to_dict_values())
       grads, (outs, losses) = bst.transform.scan(_etrace_step, grads, (indices_, inputs_))
       # gradient updates
-      # jax.debug.print('grads = {g}', g=jax.tree.map(lambda a: jnp.max(jnp.abs(a)), grads))
       grads = bst.functional.clip_grad_norm(grads, 1.)
       self.opt.update(grads)
       # accuracy
@@ -597,21 +598,22 @@ class Trainer(object):
                      self.etrace_train(x_local, y_local))
         t = time.time() - t0
         self.print(f'Batch {i:4d}, loss = {float(loss):.8f}, acc = {float(acc):.6f}, time = {t:.5f} s')
-        # if (i + 1) % 100 == 0:
-        #   self.opt.lr.step_epoch()
+        if (i + 1) % 100 == 0:
+          self.opt.lr.step_epoch()
 
         # accuracy
         avg_acc = self.smoother(acc)
         if avg_acc > max_acc:
           max_acc = avg_acc
           if platform.platform().startswith('Linux'):
-            self.target.save(i, metrics={'loss': loss, 'acc': acc})
+            self.target.save(loss=loss, acc=acc)
         if max_acc > self.args.acc_th:
           self.print(f'The training accuracy is greater than {self.args.acc_th * 100}%. Training is stopped.')
           break
         t0 = time.time()
     finally:
-      self.file.close()
+      if self.file is not None:
+        self.file.close()
 
 
 class DMS(IterableDataset):
@@ -642,7 +644,7 @@ class DMS(IterableDataset):
       t_test=500.,
       limits=(0., np.pi * 2),
       rotation_match='0',
-      kappa=8,
+      kappa=3.,
       bg_fr=1.,
       ft_motion=bd.cognitive.Feature(24, 100, 40.),
       mode: str = 'rate',
@@ -752,204 +754,411 @@ class DMS(IterableDataset):
       yield self.sample_a_trial()
 
 
-class DecisionMaking(IterableDataset):
-
-  def __init__(
-      self, n_in, t_delay=1200
-  ):
-    super().__init__()
-
-    self.n_in = n_in
-    self.t_delay = t_delay
-    self.t_interval = 150
-    self.f0 = 40. / 1000.
-    self.seq_len = int(self.t_interval * 7 + self.t_delay)
-
-  @property
-  def num_inputs(self) -> int:
-    return self.n_in
-
-  @property
-  def num_outputs(self) -> int:
-    return 2
-
-  def __iter__(self) -> Iterator[np.ndarray]:
-    while True:
-      spk_data, _, target_data, _ = self.generate_click_task_data(
-        batch_size=1,
-        seq_len=self.seq_len,
-        n_neuron=self.n_in,
-        recall_duration=150,
-        prob=0.3,
-        t_cue=100,
-        n_cues=7,
-        t_interval=self.t_interval,
-        f0=self.f0,
-        n_input_symbols=4
-      )
-      yield spk_data[0], target_data[0]
-
-  @staticmethod
-  @njit
-  def generate_click_task_data(batch_size, seq_len, n_neuron, recall_duration, prob, f0=0.5,
-                               n_cues=7, t_cue=100, t_interval=150, n_input_symbols=4):
-    n_channel = n_neuron // n_input_symbols
-
-    # assign input spike probabilities
-    probs = np.where(np.random.random((batch_size, 1)) < 0.5, prob, 1 - prob)
-
-    # for each example in batch, draw which cues are going to be active (left or right)
-    cue_assignments = np.asarray(np.random.random(n_cues) > probs, dtype=np.int_)
-
-    # generate input nums - 0: left, 1: right, 2:recall, 3:background noise
-    input_nums = 3 * np.ones((batch_size, seq_len), dtype=np.int_)
-    input_nums[:, :n_cues] = cue_assignments
-    input_nums[:, -1] = 2
-
-    # generate input spikes
-    input_spike_prob = np.zeros((batch_size, seq_len, n_neuron))
-    d_silence = t_interval - t_cue
-    for b in range(batch_size):
-      for k in range(n_cues):
-        # input channels only fire when they are selected (left or right)
-        c = cue_assignments[b, k]
-        # reverse order of cues
-        i_seq = d_silence + k * t_interval
-        i_neu = c * n_channel
-        input_spike_prob[b, i_seq:i_seq + t_cue, i_neu:i_neu + n_channel] = f0
-    # recall cue
-    input_spike_prob[:, -recall_duration:, 2 * n_channel:3 * n_channel] = f0
-    # background noise
-    input_spike_prob[:, :, 3 * n_channel:] = f0 / 4.
-    input_spikes = input_spike_prob > np.random.rand(*input_spike_prob.shape)
-
-    # generate targets
-    target_mask = np.zeros((batch_size, seq_len), dtype=np.bool_)
-    target_mask[:, -1] = True
-    target_nums = (np.sum(cue_assignments, axis=1) > n_cues / 2).astype(np.int_)
-    return input_spikes, input_nums, target_nums, target_mask
-
-
-def get_dms_data(args, cache_dir=os.path.expanduser("./data")):
-  _scale = 1.
-
-  try:
-    t_fixation = args.t_fixation
-  except:
-    t_fixation = 500.
-
-  task = DMS(
-    dt=bst.environ.get_dt(),
-    mode='spiking',
-    bg_fr=1.,
-    t_fixation=t_fixation * _scale,
-    t_sample=500. * _scale,
-    t_delay=args.t_delay * _scale,
-    t_test=500. * _scale,
-    ft_motion=bd.cognitive.Feature(24, 100, 100.)
-  )
-  train_loader = DataLoader(task, batch_size=args.batch_size)
-  test_loader = DataLoader(task, batch_size=args.batch_size)
-
-  in_shape = (task.num_inputs,)
-  out_shape = task.num_outputs
-
-  args.warmup_ratio = task.num_steps - task.t_test
-  return bst.util.DotDict(
-    {'train_loader': train_loader,
-     'test_loader': test_loader,
-     'in_shape': in_shape,
-     'out_shape': out_shape,
-     'target_type': 'fixed',  # 'fixed' or 'varied'
-     'input_process': lambda x: jnp.asarray(x, dtype=bst.environ.dftype()).transpose(1, 0, 2),
-     'label_process': lambda x: jnp.asarray(x, dtype=bst.environ.ditype())}
-  )
-
-
-def get_dm_data(args, cache_dir=None):
-  ds = DecisionMaking(n_in=40, t_delay=args.t_delay)
-  train_loader = DataLoader(ds, batch_size=args.batch_size)
-  test_loader = DataLoader(ds, batch_size=args.batch_size)
-
-  in_shape = (ds.num_inputs,)
-  out_shape = ds.num_outputs
-
-  args.warmup_ratio = ds.seq_len - 150
-  return bst.util.DotDict(
-    {'train_loader': train_loader,
-     'test_loader': test_loader,
-     'in_shape': in_shape,
-     'out_shape': out_shape,
-     'target_type': 'fixed',  # 'fixed' or 'varied'
-     'input_process': lambda x: jnp.asarray(x, dtype=bst.environ.dftype()).transpose(1, 0, 2),
-     'label_process': lambda x: jnp.asarray(x, dtype=bst.environ.ditype())}
-  )
-
-
-def get_long_term_dependent_data(args, cache_dir=os.path.expanduser("./data")):
-  data_to_fun = {
-    'dms': get_dms_data,
-    'dm': get_dm_data,
-  }
-  ret = data_to_fun[args.dataset.lower()](args, cache_dir)
-  return ret
-
-
-def load_model():
-  global global_args
-  filepath = 'results/long-term-snn/expsm_diag t_minus_1 exact 0 decay=0.98 dms/optim=adam-lr=0.001-t_delay=1200.0-tau_I2=2000.0-ffscale=10.0-recscale=2.0-2024-06-13 15-39-20'
-  filepath = 'results/long-term-snn/expsm_diag t_minus_1 exact 0 decay=0.98 dms/optim=adam-lr=0.001-t_delay=1200.0-tau_I2=2000.0-ffscale=10.0-recscale=2.0-2024-06-13 16-46-58'
-  filepath = 'results/long-term-snn/expsm_diag t_minus_1 exact 0 decay=0.98 dms/optim=adam-lr=0.001-t_delay=1200.0-tau_I2=2000.0-ffscale=10.0-recscale=2.0-2024-06-13 16-52-16'
-  filepath = 'results/long-term-snn/expsm_diag t_minus_1 exact 0 decay=0.98 dms multi_gaussian/optim=adam-lr=0.001-t_delay=1200.0-tau_I2=2000.0-ffscale=10.0-recscale=2.0-2024-06-13 17-00-44'
-  filepath = 'results/long-term-snn/diag t exact 0 dms s2nn/optim=adam-lr=0.001-t_delay=1200.0-tau_I2=2000.0-ffscale=10.0-recscale=2.0-2024-06-13 17-21-55'
-  filepath = 'results/long-term-snn/expsm_diag t_minus_1 exact 0 decay=0.985 dms multi_gaussian/optim=adam-lr=0.001-t_delay=2000.0-tau_I2=2000.0-ffscale=10.0-recscale=2.0-2024-06-13 18-19-57'
-  with open(f'{filepath}/loss.txt', 'r') as f:
-    args = f.readline().strip().replace('Namespace', 'dict')
-    global_args = bst.util.DotDict(eval(args))
-
-  def plot_weight_dist(weight_vals: dict, show: bool = True, title='', filepath=None):
-    fig, gs = bts.visualize.get_figure(1, len(weight_vals), 3., 4.5)
-    for i, (k, v) in enumerate(weight_vals.items()):
-
-      ax = fig.add_subplot(gs[0, i])
-      if isinstance(v, dict):
-        v = v['weight']
+def plot_weight_dist(weight_vals: dict, n_in, show: bool = True, title='', filepath=None, dist=True):
+  fig, gs = bts.visualize.get_figure(1, len(weight_vals), 3., 4.5)
+  for i, (k, v) in enumerate(weight_vals.items()):
+    ax = fig.add_subplot(gs[0, i])
+    if isinstance(v, dict):
+      v = v['weight']
+      if dist:
         v1, v2 = jnp.split(v, [n_in], axis=0)
         ax.hist(v1.flatten(), bins=100, density=True, alpha=0.5, label='Input')
         ax.hist(v2.flatten(), bins=100, density=True, alpha=0.5, label='Recurrent')
         plt.legend()
       else:
+        # print(jnp.linalg.matrix_rank(v))
+        c = ax.pcolor(v, cmap='viridis')
+        plt.colorbar(c, ax=ax)
+    else:
+      if dist:
         ax.hist(v.flatten(), bins=100, density=True, alpha=0.5)
-      ax.set_title(k)
+      else:
+        # print(jnp.linalg.matrix_rank(v))
+        c = ax.pcolor(v, cmap='viridis')
+        plt.colorbar(c, ax=ax)
+    ax.set_title(k)
+  if title:
+    plt.suptitle(title)
+  if filepath:
+    plt.savefig(f'{filepath}/weight_dist-{title}.png')
+  if show:
+    plt.show()
+
+
+def load_data():
+  # loading the data
+  task = DMS(dt=bst.environ.get_dt(), mode='spiking', bg_fr=1., t_fixation=global_args.t_fixation, t_sample=500.,
+             t_delay=global_args.t_delay, t_test=500., ft_motion=bd.cognitive.Feature(24, 100, 100.))
+  train_loader = DataLoader(task, batch_size=global_args.batch_size)
+  input_process = lambda x: jnp.asarray(x, dtype=bst.environ.dftype()).transpose(1, 0, 2)
+  label_process = lambda x: jnp.asarray(x, dtype=bst.environ.ditype())
+  global_args.warmup_ratio = task.num_steps - task.t_test
+  global_args.n_out = task.num_outputs
+  n_in = task.num_inputs
+  return train_loader, input_process, label_process, n_in
+
+
+def load_a_batch_data():
+  # loading the data
+  task = DMS(dt=bst.environ.get_dt(), mode='spiking', bg_fr=1., t_fixation=global_args.t_fixation, t_sample=500.,
+             t_delay=global_args.t_delay, t_test=500., ft_motion=bd.cognitive.Feature(24, 100, 100.))
+  input_process = lambda x: jnp.asarray(x, dtype=bst.environ.dftype()).transpose(1, 0, 2)
+  label_process = lambda x: jnp.asarray(x, dtype=bst.environ.ditype())
+  global_args.warmup_ratio = task.num_steps - task.t_test
+  global_args.n_out = task.num_outputs
+  n_in = task.num_inputs
+
+  xs = []
+  ys = []
+  for i in range(1):
+    x, y = task.sample_a_trial()
+    xs.append(x)
+    ys.append(y)
+  xs = input_process(xs)
+  ys = label_process(ys)
+  return xs, ys, n_in
+
+
+def show_weight_difference():
+  different_path = {
+    'ES-D-RTRL': (
+      r'results\rsnn-for-dms\diff-spike\expsm_diag t 0 decay=0.99\t_delay=1000.0-tau_I2=1500.0-tau_neu=100.0-tau_syn=100.0-A2=1.0-ffscale=6.0-recscale=2.0-diff_spike=1-2024-07-04 19-31-46'
+    ),
+    'BPTT': (
+      r'results\rsnn-for-dms\diff-spike\bptt\t_delay=1000.0-tau_I2=1500.0-tau_neu=100.0-tau_syn=100.0-A2=1.0-ffscale=6.0-recscale=2.0-diff_spike=1-2024-07-04 19-31-29'
+    ),
+    'D-RTRL': (
+      r'results\rsnn-for-dms\diff-spike\diag t 0\t_delay=1000.0-tau_I2=1500.0-tau_neu=100.0-tau_syn=100.0-A2=1.0-ffscale=6.0-recscale=2.0-diff_spike=1-2024-07-04 19-13-42'
+    ),
+  }
+
+  # different_path = {
+  #   'ES-D-RTRL': (
+  #     r'results\rsnn-for-dms\non-diff-spike\expsm_diag t 0 decay=0.99\t_delay=1000.0-tau_I2=1500.0-tau_neu=100.0-tau_syn=100.0-A2=1.0-ffscale=6.0-recscale=2.0-diff_spike=0-2024-07-04 19-33-39'
+  #   ),
+  #   'BPTT': (
+  #     r'results\rsnn-for-dms\non-diff-spike\bptt\t_delay=1000.0-tau_I2=1500.0-tau_neu=100.0-tau_syn=100.0-A2=1.0-ffscale=6.0-recscale=2.0-diff_spike=0-2024-07-04 19-26-03'
+  #   ),
+  #   'D-RTRL': (
+  #     r'results\rsnn-for-dms\non-diff-spike\diag t 0\t_delay=1000.0-tau_I2=1500.0-tau_neu=100.0-tau_syn=100.0-A2=1.0-ffscale=6.0-recscale=2.0-diff_spike=0-2024-07-04 19-24-01'
+  #   ),
+  # }
+
+  def visualize_weight(w, title=''):
+    w_in, w_rec = np.split(w, [n_in], axis=0)
+    fig, gs = bts.visualize.get_figure(1, 2, 3., 3.5)
+    ax = fig.add_subplot(gs[0, 0])
+    c = ax.pcolor(w_in, cmap='viridis')
+    plt.colorbar(c, ax=ax)
+    plt.xticks([])
+    plt.yticks([])
+    plt.title('$W_\mathrm{in}$')
+    ax = fig.add_subplot(gs[0, 1])
+    c = ax.pcolor(w_rec, cmap='viridis')
+    plt.colorbar(c, ax=ax)
+    plt.xticks([])
+    plt.yticks([])
+    plt.title('$W_\mathrm{rec}$')
     if title:
       plt.suptitle(title)
-    if filepath:
-      plt.savefig(f'{filepath}/weight_dist-{title}.png')
-    if show:
-      plt.show()
+    # plt.show()
 
-  bst.environ.set(
-    mode=bst.mixin.JointMode(bst.mixin.Batching(), bst.mixin.Training()),
-    dt=global_args.dt
-  )
+  def visualize_weight_dist(w, title=''):
+    w_in, w_rec = np.split(w, [n_in], axis=0)
+    fig, gs = bts.visualize.get_figure(1, 2, 3., 3.5)
+    ax = fig.add_subplot(gs[0, 0])
+    plt.hist(w_in.flatten(), bins=100, density=True)
+    plt.xlabel('Weight Value')
+    plt.ylabel('Density')
+    plt.title('$W_\mathrm{in}$')
+    ax = fig.add_subplot(gs[0, 1])
+    plt.hist(w_rec.flatten(), bins=100, density=True)
+    plt.xlabel('Weight Value')
+    plt.title('$W_\mathrm{rec}$')
+    if title:
+      plt.suptitle(title)
+    # plt.show()
 
-  # loading the data
-  dataset = get_long_term_dependent_data(global_args)
-  global_args.n_out = dataset.out_shape
-  n_in = np.prod(dataset.in_shape)
+  def pca_visualize(w, title=''):
+    from sklearn.decomposition import PCA
 
-  # creating the network and optimizer
-  net = GifNet(
-    n_in,
-    global_args.n_rec,
-    global_args.n_out,
-    global_args,
-    filepath=filepath
-  )
-  plot_weight_dist(net.states().subset(bst.ParamState).to_dict_values(), False, 'Before', filepath=filepath)
-  net.restore()
-  plot_weight_dist(net.states().subset(bst.ParamState).to_dict_values(), False, 'After', filepath=filepath)
-  net.verify(dataset.train_loader, dataset.input_process, num_show=5, sps_inc=10., filepath=filepath)
+    pca = PCA(n_components=2)
+    pca.fit(w)
+    w_pca = pca.transform(w)
+    fig, gs = bts.visualize.get_figure(1, 1, 3., 4.5)
+    ax = fig.add_subplot(gs[0, 0])
+    scatter = plt.scatter(w_pca[:, 0], w_pca[:, 1])
+    # cbar = plt.colorbar(scatter, ax=ax)
+    # cbar.set_label('Labels')
+    plt.xlim(-2.0, 2.0)
+    plt.ylim(-2.0, 2.0)
+    plt.xlabel('PC1')
+    plt.ylabel('PC2')
+    ax.grid(True)  # Add grid lines
+    if title:
+      plt.suptitle(title)
+
+  def stability_plot(w, title=''):
+    w_in, w_rec = np.split(w, [n_in], axis=0)
+    fig, gs = bts.visualize.get_figure(1, 1, 3., 4.5)
+
+    ax = fig.add_subplot(gs[0, 0])
+    eigen_vals = np.linalg.eigvals(w_rec)
+    plt.scatter(eigen_vals.real, eigen_vals.imag)
+    circle = plt.Circle((0, 0), 1, fill=False, color='red', linestyle='--')
+    plt.gca().add_artist(circle)
+    plt.axhline(y=0, color='k', linestyle='-', linewidth=0.5)
+    plt.axvline(x=0, color='k', linestyle='-', linewidth=0.5)
+    plt.xlabel('Real Part')
+    plt.ylabel('Imaginary Part')
+    plt.grid(True, linestyle=':', alpha=0.6)
+    plt.axis('equal')
+    if title:
+      plt.suptitle(title)
+    # plt.show()
+
+  global global_args
+  for key, filepath in different_path.items():
+    with open(f'{filepath}/loss.txt', 'r') as f:
+      print(f'Loading {filepath} ...')
+
+      args = f.readline().strip().replace('Namespace', 'dict')
+      global_args = bst.util.DotDict(eval(args))
+      global_args['t_fixation'] = 500.
+
+      bst.environ.set(
+        mode=bst.mixin.JointMode(bst.mixin.Batching(), bst.mixin.Training()),
+        dt=global_args.dt
+      )
+      bst.util.clear_name_cache()
+      train_loader, input_process, label_process, n_in = load_data()
+      net = GifNet(n_in, global_args.n_rec, global_args.n_out, global_args, filepath=filepath)
+      net.restore()
+      weight = net.ir2r.weight_op.value['weight']
+
+      visualize_weight(weight, title=key)
+      # visualize_weight_dist(weight, title=key)
+      # pca_visualize(weight.T, title=key)
+      # stability_plot(weight, title=key)
+
+  plt.show()
+
+
+@njit
+def numba_seed(seed):
+  np.random.seed(seed)
+
+
+def show_expsm_diag_etrace():
+  filepath = (
+    r'results\rsnn-for-dms\diff-spike\expsm_diag t 0 decay=0.99\t_delay=1000.0-tau_I2=1500.0-tau_neu=100.0-tau_syn=100.0-A2=1.0-ffscale=6.0-recscale=2.0-diff_spike=1-2024-07-04 19-31-46')
+  # filepath = (r'results\rsnn-for-dms\non-diff-spike\expsm_diag t 0 decay=0.99\t_delay=1000.0-tau_I2=1500.0-tau_neu=100.0-tau_syn=100.0-A2=1.0-ffscale=6.0-recscale=2.0-diff_spike=0-2024-07-04 19-33-39')
+
+  global global_args
+  with open(f'{filepath}/loss.txt', 'r') as f:
+    print(f'Loading {filepath} ...')
+
+    seed = 2024
+    bst.random.seed(seed)
+    numba_seed(seed)
+
+    args = f.readline().strip().replace('Namespace', 'dict')
+    global_args = bst.util.DotDict(eval(args))
+    global_args['t_fixation'] = 500.
+
+    bst.environ.set(
+      mode=bst.mixin.JointMode(bst.mixin.Batching(), bst.mixin.Training()),
+      dt=global_args.dt
+    )
+    bst.util.clear_name_cache()
+    xs, ys, n_in = load_a_batch_data()
+    indices = np.arange(xs.shape[0])
+    net = GifNet(n_in, global_args.n_rec, global_args.n_out, global_args, filepath=filepath)
+    net.restore()
+    mems, acc, etraces = net.etrace_predict(xs, ys)
+    print(acc)
+
+    # n_to_vis = 10
+    # fig, gs = bts.visualize.get_figure(len(etraces[0]) + len(etraces[1]), 1, 2., 10.)
+    # for i, val in enumerate(etraces[0].values()):
+    #   ax = fig.add_subplot(gs[i, 0])
+    #   plt.plot(indices, val[:, 0, :n_to_vis])
+    # for j, val in enumerate(etraces[1].values()):
+    #   ax = fig.add_subplot(gs[len(etraces[0]) + j, 0])
+    #   plt.plot(indices, val[:, 0, :n_to_vis])
+    # plt.show()
+
+    # num = 3
+    # fig, gs = bts.visualize.get_figure(len(etraces[0]) + len(etraces[1]), num, 2., 4.)
+    # for k in range(num):
+    #   for i, val in enumerate(etraces[0].values()):
+    #     ax = fig.add_subplot(gs[i, k])
+    #     plt.plot(indices, val[:, k])
+    #   n = len(etraces[0])
+    #   for j, val in enumerate(etraces[1].values()):
+    #     ax = fig.add_subplot(gs[n + j, k])
+    #     plt.plot(indices, val[:, k])
+    #   # ax = fig.add_subplot(gs[-1, k])
+    #   # plt.plot(indices, mems[:, 0, k])
+    # plt.show()
+
+    def plot_other(min_, max_, name):
+      plt.ylabel(name)
+      plt.axvline(500., linestyle='--')
+      plt.axvline(1000., linestyle='--')
+      plt.axvline(2000., linestyle='--')
+
+      plt.fill_between([0., 500.], min_, max_, color='ivory', )
+      plt.fill_between([500., 1000.], min_, max_, color='linen', )
+      plt.fill_between([1000., 2000.], min_, max_, color='ivory', )
+      plt.fill_between([2000., 2500.], min_, max_, color='linen', )
+
+      plt.xlim(0, xs.shape[0])
+
+    plt.style.use(['science', 'nature', 'notebook'])
+    n_gs = len(etraces[0]) + len(etraces[1])
+    fig, gs = bts.visualize.get_figure(n_gs, 1, 6.0 / n_gs, 9.0)
+    names = ['$\epsilon_\mathrm{pre}$', '$\epsilon_\mathrm{post,g}$',
+             '$\epsilon_\mathrm{post,a}$', '$\epsilon_\mathrm{post,V}$', ]
+    axes = []
+
+    n_to_vis = 3
+    for i, val in enumerate(etraces[0].values()):
+      min_, max_ = np.inf, 0.
+      ax = fig.add_subplot(gs[i, 0])
+      axes.append(ax)
+      for k in np.random.randint(0, 100, n_to_vis):
+        data = val[:, k]
+        min_ = min(min_, data.min())
+        max_ = max(max_, data.max())
+        plt.plot(indices, data, label='$\mathrm{pre}_{%d}$' % k)
+      plt.xticks([])
+      plt.legend(fontsize=10, ncol=1, bbox_to_anchor=(1.01, 1.01))
+      plot_other(min_, max_, names[i])
+    i_start = len(etraces[0])
+
+    matplotlib.rcParams['axes.prop_cycle'] = matplotlib.cycler(color=['#e41a1c', '#a65628', '#984ea3'])
+    # matplotlib.rcParams['axes.prop_cycle'] = matplotlib.cycler(
+      # color=[  # '#377eb8', '#ff7f00', '#4daf4a',
+      #     '#f781bf', '#a65628', '#984ea3',
+      #     '#999999', '#e41a1c', '#dede00']
+    # )
+    # matplotlib.rcParams['axes.prop_cycle'] = matplotlib.cycler(
+    #   color=['peru', 'darkviolet', 'darkcyan', 'darkorange',
+    #   'darkgreen', 'darkred', 'darkblue', 'darkmagenta', 'darkgoldenrod' ]
+    # )
+    neu_post_ids = np.random.randint(0, 100, n_to_vis)
+    for j, val in enumerate(etraces[1].values()):
+      ax = fig.add_subplot(gs[i_start + j, 0])
+      axes.append(ax)
+      min_, max_ = np.inf, 0.
+      for k in neu_post_ids:
+        data = val[:, k]
+        min_ = min(min_, data.min())
+        max_ = max(max_, data.max())
+        ax.plot(indices, data, label='$\mathrm{post}_{%d}$' % k)
+      plt.legend(fontsize=10, ncol=1, bbox_to_anchor=(1.01, 1.01))
+      plot_other(min_, max_, names[i_start + j])
+      if j == len(etraces[1]) - 1:
+        plt.xlabel('Time [ms]')
+      else:
+        plt.xticks([])
+
+    # ax = fig.add_subplot(gs[-1, 0])
+    # axes.append(ax)
+    # min_, max_ = np.inf, 0.
+    # for k in neu_post_ids:
+    #   data = mems[:, 0, k]
+    #   min_ = min(min_, data.min())
+    #   max_ = max(max_, data.max())
+    #   plt.plot(indices, data, label='$\mathrm{post}_{%d}$' % k)
+    # plt.legend(fontsize=10, ncol=1, bbox_to_anchor=(1.001, 1.01))
+    # plot_other(min_, max_, 'Potential')
+
+    fig.align_ylabels(axes)
+    # plt.suptitle('ETrace in D-RTRL', fontsize=16)
+    plt.show()
+
+
+def show_diag_etrace():
+  filepath = r'results\rsnn-for-dms\diff-spike\diag t 0\t_delay=1000.0-tau_I2=1500.0-tau_neu=100.0-tau_syn=100.0-A2=1.0-ffscale=6.0-recscale=2.0-diff_spike=1-2024-07-04 19-13-42'
+  # filepath = r'results\rsnn-for-dms\non-diff-spike\diag t 0\t_delay=1000.0-tau_I2=1500.0-tau_neu=100.0-tau_syn=100.0-A2=1.0-ffscale=6.0-recscale=2.0-diff_spike=0-2024-07-04 19-24-01'
+
+  global global_args
+  with open(f'{filepath}/loss.txt', 'r') as f:
+    print(f'Loading {filepath} ...')
+
+    args = f.readline().strip().replace('Namespace', 'dict')
+    global_args = bst.util.DotDict(eval(args))
+    global_args['t_fixation'] = 500.
+
+    seed = 2024
+    bst.random.seed(seed)
+    numba_seed(seed)
+
+    bst.environ.set(
+      mode=bst.mixin.JointMode(bst.mixin.Batching(), bst.mixin.Training()),
+      dt=global_args.dt
+    )
+    bst.util.clear_name_cache()
+    # dataset
+    xs, ys, n_in = load_a_batch_data()
+    indices = np.arange(xs.shape[0])
+    # network
+    net = GifNet(n_in, global_args.n_rec, global_args.n_out, global_args, filepath=filepath)
+    net.restore()
+    # prediction
+    mems, acc, etraces = net.etrace_predict(xs, ys)
+    print(acc)
+
+    plt.style.use(['science', 'nature', 'notebook'])
+    fig, gs = bts.visualize.get_figure(len(etraces), 1, 6 // len(etraces), 9.0)
+    names = ['$\epsilon_g$', '$\epsilon_{a}$', '$\epsilon_{V}$', ]
+    axes = []
+    for i, val in enumerate(etraces.values()):
+      min_, max_ = np.inf, 0.
+
+      neuron_ids = [131, 160, 122, 57, 31]
+      ax = fig.add_subplot(gs[i, 0])
+      axes.append(ax)
+      for i_neuron in neuron_ids:
+        data = val['weight'][:, i_neuron, 0]
+        min_ = min(min_, data.min())
+        max_ = max(max_, data.max())
+        plt.plot(indices, data, label=f'(0, {i_neuron})')
+
+      if i == 0:
+        plt.legend(fontsize=10, ncol=1, bbox_to_anchor=(1.01, 1.05))
+      if i + 1 == len(etraces):
+        plt.xlabel('Time [ms]')
+      else:
+        plt.xticks([])
+      plt.ylabel(names[i])
+      plt.axvline(500., linestyle='--')
+      plt.axvline(1000., linestyle='--')
+      plt.axvline(2000., linestyle='--')
+
+      plt.fill_between([0., 500.], min_, max_, color='ivory', )
+      plt.fill_between([500., 1000.], min_, max_, color='linen', )
+      plt.fill_between([1000., 2000.], min_, max_, color='ivory', )
+      plt.fill_between([2000., 2500.], min_, max_, color='linen', )
+
+      plt.xlim(0, xs.shape[0])
+
+    fig.align_ylabels(axes)
+    # plt.suptitle('ETrace in D-RTRL', fontsize=16)
+    plt.show()
+
+    # num = 5
+    # fig, gs = bts.visualize.get_figure(len(etraces), num, 2., 4.)
+    # # neuron_ids = np.random.randint(0, global_args.n_rec, num)
+    # print(neuron_ids)
+    # for k in range(num):
+    #   i_neuron = neuron_ids[k]
+    #   for i, val in enumerate(etraces.values()):
+    #     ax = fig.add_subplot(gs[i, k])
+    #     plt.plot(indices, val['weight'][:, i_neuron, 0])
+    # plt.show()
 
 
 def network_training():
@@ -963,77 +1172,49 @@ def network_training():
   if global_args.filepath:
     filepath = global_args.filepath
   else:
-    aim = f'long-term-snn/{global_args.exp_name}' if global_args.exp_name else 'long-term-snn'
+    aim = f'results/rsnn-for-dms/'
+    if global_args.exp_name:
+      aim += global_args.exp_name
     now = time.strftime('%Y-%m-%d %H-%M-%S', time.localtime(int(round(time.time() * 1000)) / 1000))
-    name = (
-      f'optim={global_args.optimizer}-lr={global_args.lr}-t_delay={global_args.t_delay}-'
-      f'tau_I2={global_args.tau_I2}-ffscale={global_args.ff_scale}-'
-      f'recscale={global_args.rec_scale}-{now}'
+    param = (
+      f't_delay={global_args.t_delay}-'
+      f'tau_I2={global_args.tau_I2}-tau_neu={global_args.tau_neu}-'
+      f'tau_syn={global_args.tau_syn}-A2={global_args.A2}-'
+      f'ffscale={global_args.ff_scale}-recscale={global_args.rec_scale}-'
+      f'diff_spike={global_args.diff_spike}-{now}'
     )
     if global_args.method == 'bptt':
-      filepath = (
-        f'results/{aim}/'
-        f'{global_args.method} {global_args.dataset} {global_args.spk_fun}/{name}'
-      )
+      filepath = f'{aim}/{global_args.method}/{param}'
     elif global_args.method == 'diag':
-      filepath = (
-        f'results/{aim}/{global_args.method} {global_args.vjp_time} '
-        f'{global_args.diag_jacobian} {global_args.diag_normalize} '
-        f'{global_args.dataset} {global_args.spk_fun}/{name}'
-      )
+      filepath = f'{aim}/{global_args.method} {global_args.vjp_time} {global_args.diag_normalize}/{param}'
     else:
       filepath = (
-        f'results/{aim}/{global_args.method} {global_args.vjp_time} '
-        f'{global_args.diag_jacobian} {global_args.diag_normalize} '
-        f'decay={global_args.etrace_decay} {global_args.dataset} '
-        f'{global_args.spk_fun}/{name}'
+        f'{aim}/{global_args.method} {global_args.vjp_time} {global_args.diag_normalize} '
+        f'decay={global_args.etrace_decay}/{param}'
       )
+  # filepath = None
+  print(filepath)
 
   # loading the data
-  dataset = get_long_term_dependent_data(global_args)
-  global_args.n_out = dataset.out_shape
+  train_loader, input_process, label_process, n_in = load_data()
 
   # creating the network and optimizer
-  net = GifNet(
-    np.prod(dataset.in_shape),
-    global_args.n_rec,
-    global_args.n_out,
-    global_args,
-    filepath=filepath
-  )
+  net = GifNet(n_in, global_args.n_rec, global_args.n_out, global_args, filepath=filepath)
 
   if global_args.mode == 'sim':
     if global_args.filepath:
       net.restore()
-    net.verify(dataset.train_loader, dataset.input_process, num_show=5, sps_inc=10.)
+    net.verify(train_loader, input_process, num_show=5, sps_inc=10.)
 
   elif global_args.mode == 'train':
-    if global_args.optimizer == 'adam':
-      opt_cls = bst.optim.Adam
-    elif global_args.optimizer == 'momentum':
-      opt_cls = bst.optim.Momentum
-    elif global_args.optimizer == 'sgd':
-      opt_cls = bst.optim.SGD
-    else:
-      raise ValueError(f'Unknown optimizer: {global_args.optimizer}')
-    if global_args.lr_milestones == '':
-      lr = global_args.lr
-    else:
-      lr_milestones = [int(m) for m in global_args.lr_milestones.split(',')]
-      lr = bst.optim.MultiStepLR(global_args.lr, milestones=lr_milestones, gamma=0.2)
-    opt = opt_cls(lr=lr, weight_decay=global_args.weight_L2)
+    opt = bst.optim.Adam(lr=global_args.lr, weight_decay=global_args.weight_L2)
 
     # creating the trainer
-    trainer = Trainer(
-      net,
-      opt,
-      global_args,
-      filepath,
-    )
+    trainer = Trainer(net, opt, global_args, filepath)
     trainer.f_train(
-      dataset.train_loader,
-      x_func=dataset.input_process,
-      y_func=dataset.label_process,
+      train_loader,
+      x_func=input_process,
+      y_func=label_process,
     )
 
   else:
@@ -1042,36 +1223,8 @@ def network_training():
 
 if __name__ == '__main__':
   pass
-  network_training()
-  # load_model()
-
-"""
-BPTT:
-
-    python task-rsnn-long-term-dependency.py --mode train --method bptt --dataset dms --t_delay 1200 --n_rec 200 --lr 0.001 --optimizer adam --devices 0
-
-
-Diag:
-
-    python task-rsnn-long-term-dependency.py --mode train --method diag --diag_jacobian exact --vjp_time t --dataset dms --t_delay 1200 \
-        --tau_I2 1500 --n_rec 200 --lr 0.001 --optimizer adam --devices 3
-
-    
-    python task-rsnn-long-term-dependency.py --mode train --method diag --diag_jacobian vjp --vjp_time t_minus_1 --dataset dms \
-        --t_delay 1500  --tau_I2 2000 --n_rec 200 --lr 0.001 --A2 -0.1 --optimizer adam --devices 1 --t_fixation 10. \
-        --spk_fun s2nn --acc_th 0.94
-
-    
-    
-
-Expsm_diag:
-    
-    python task-rsnn-long-term-dependency.py --mode train --method expsm_diag --diag_jacobian vjp --etrace_decay 0.98 --vjp_time t_minus_1 \
-        --dataset dms --t_delay 1500  --tau_I2 2000 --n_rec 200 --lr 0.001 --A2 -0.1 --optimizer adam --devices 1 --t_fixation 10. \
-        --spk_fun s2nn --acc_th 0.94
-
-    python task-rsnn-long-term-dependency.py --mode train --method expsm_diag --diag_jacobian vjp --etrace_decay 0.98 --vjp_time t_minus_1 \
-        --dataset dms --t_delay 1800  --tau_I2 2000 --n_rec 200 --lr 0.001 --A2 -0.1 --optimizer adam --devices 3 --t_fixation 10. \
-        --spk_fun multi_gaussian --acc_th 0.94
-
-"""
+  # network_training()
+  # show_weight_difference()
+  # show_expsm_diag_etrace()
+  show_diag_etrace()
+  # show_weight_difference()
