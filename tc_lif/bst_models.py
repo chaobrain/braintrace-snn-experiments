@@ -334,8 +334,10 @@ class TwoCompartmentLIF(brainstate.nn.Dynamics):
         super().__init__(in_size)
 
         ones = jnp.ones(self.varshape, dtype=brainstate.environ.dftype())
-        self.beta1 = brainscale.ElemWiseParam(beta1, lambda w: w * ones)
-        self.beta2 = brainscale.ElemWiseParam(beta2, lambda w: w * ones)
+        # self.beta1 = brainscale.ElemWiseParam(beta1, lambda w: w * ones)
+        # self.beta2 = brainscale.ElemWiseParam(beta2, lambda w: w * ones)
+        self.beta1 = brainscale.ElemWiseParam(jnp.ones(self.varshape) * beta1)
+        self.beta2 = brainscale.ElemWiseParam(jnp.ones(self.varshape) * beta2)
 
         self.gamma = gamma
         self.v_threshold = v_threshold

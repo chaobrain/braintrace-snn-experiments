@@ -82,18 +82,11 @@ class Trainer(brainstate.util.PrettyObject):
         brainstate.random.seed(self.args.seed)
 
         # tensorboard
+        filename = f'./dvs_gesture-{self.args.rnn_type}-{self.args.num_layers}-{self.args.method}'
         if self.args.method == 'esd-rtrl':
-            tensorboard_dir = os.path.join(
-                self.args.logdir,
-                f'./dvs_gesture-{self.args.method}-{self.args.etrace_decay}'
-                f'-{datetime.now().strftime("%Y-%m-%d-%H-%M-%S")}'
-            )
-        else:
-            tensorboard_dir = os.path.join(
-                self.args.logdir,
-                f'./dvs_gesture-{self.args.method}'
-                f'-{datetime.now().strftime("%Y-%m-%d-%H-%M-%S")}'
-            )
+            filename += '-{self.args.etrace_decay}'
+        filename += f'-{datetime.now().strftime("%Y-%m-%d-%H-%M-%S")}'
+        tensorboard_dir = os.path.join(self.args.logdir, filename)
         os.makedirs(tensorboard_dir, exist_ok=True)
         print(f'Tensorboard logged to {os.path.abspath(tensorboard_dir)}')
         print('Backing up current file')
