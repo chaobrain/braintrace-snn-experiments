@@ -235,3 +235,11 @@ cython_debug/
 /a/
 /bash-codes/
 /figs/
+/tc_lif/exp/
+/tc_lif/data/
+/sparch/exp/
+/sparch/exp-old/
+/sparch/exp-v2/
+/sparch/exp-d-rtrl/
+/sparch/exp-esd-rtrl/
+/sparch/exp-bptt/

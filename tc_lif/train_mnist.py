@@ -7,27 +7,64 @@ import time
 from copy import deepcopy
 from datetime import datetime
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
+
 import jax
 import jax.numpy as jnp
 import optax
 
-from bst_args import parse_args
-
-args = parse_args()
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
-
+import brainunit as u
 import brainscale
 import brainstate
 import braintools
-from bst_data import load_shd_dataset
-from bst_models import get_neuron, FFNetSHD, RecNetSHD
-from bst_utils import save_model_states, AverageMeter, ProgressMeter, setup_logging
+from data import load_mnist_dataset
+from models import get_neuron, FFNetMnist, RecNetMnist
+from bst_utils import save_model_states, AverageMeter, ProgressMeter, setup_logging, MyArgumentParser
+
+
+def parse_args():
+    parser = MyArgumentParser(description='Sequential SHD/SSC')
+
+    parser.add_argument('--task', default='SMNIST', type=str, choices=['SMNIST', 'PSMNIST'])
+    args, _ = parser.parse_known_args()
+    parser.add_argument("--num-input", type=int, default=1)
+    parser.add_argument('--optim', default='adam', type=str, help='optimizer (default: adam)')
+    parser.add_argument('--results-dir', default='', type=str, metavar='PATH')
+    parser.add_argument('--data-dir', default='./data', type=str, metavar='PATH')
+    parser.add_argument('--print-freq', default=10, type=int)
+    parser.add_argument('--seed', default=0, type=int, metavar='N', help='seed')
+    parser.add_argument('--epochs', default=100, type=int, metavar='N', help='number of total epochs to run')
+    parser.add_argument('--lr', '--learning-rate', default=0.001, type=float, dest='lr')
+    parser.add_argument('--schedule', default=[40, 80], nargs='*', type=int)
+    parser.add_argument('--batch-size', default=256, type=int, metavar='N', help='mini-batch size')
+    parser.add_argument('--wd', default=0, type=float, metavar='W', help='weight decay')
+    parser.add_argument('--warmup-ratio', type=float, default=0.)
+
+    # options for SNNs
+    if args.task == 'SMNIST':
+        parser.add_argument('--threshold', default=1.0, type=float, help='')
+    else:
+        parser.add_argument('--threshold', default=1.8, type=float, help='')
+    parser.add_argument('--detach-reset', action='store_true', default=False, help='')
+    parser.add_argument('--hard-reset', action='store_true', default=False, help='')
+    parser.add_argument('--decay-factor', default=1.0, type=float, help='')
+    parser.add_argument('--beta1', default=0.0, type=float, help='')
+    parser.add_argument('--beta2', default=0.0, type=float, help='')
+    parser.add_argument('--gamma', default=0.5, type=float, help='dendritic reset scaling hyper-parameter')
+    parser.add_argument('--sg', default='triangle', type=str, help='surrogate gradient: triangle and exp')
+    parser.add_argument('--neuron', default='tclif', type=str, help='plif, lif, tclif')
+    parser.add_argument('--network', default='ff', type=str, help='fb, ff')
+
+    args = parser.parse_args()
+    return args
 
 
 class Trainer(brainstate.util.PrettyObject):
-    def __init__(self, input_size):
+    def __init__(self, args):
         self.args = deepcopy(args)
         brainstate.random.seed(self.args.seed)
+
+        self.perm = brainstate.random.permutation(jnp.arange(784))
 
         if self.args.results_dir == '':
             if self.args.method == 'esd-rtrl':
@@ -48,16 +85,14 @@ class Trainer(brainstate.util.PrettyObject):
 
         # model
         if self.args.network == 'ff':
-            model_type = FFNetSHD
+            model_type = FFNetMnist
         elif self.args.network == 'fb':
-            model_type = RecNetSHD
+            model_type = RecNetMnist
         else:
             raise NotImplementedError
         spiking_neuron = get_neuron(self.args)
         self.model = model_type(
             in_dim=self.args.num_input,
-            hidden=self.args.num_hidden,
-            out_dim=self.args.num_output,
             spiking_neuron=spiking_neuron
         )
         table, _ = brainstate.nn.count_parameters(self.model, return_table=True)
@@ -102,7 +137,8 @@ class Trainer(brainstate.util.PrettyObject):
         return braintools.metric.softmax_cross_entropy_with_integer_labels(predictions, targets).mean()
 
     def _accuracy(self, output, target, topk=(1,)):
-        """Computes the accuracy over the k top predictions for the specified values of k"""
+        """Computes the accuracy over the k top predictions
+        for the specified values of k"""
         maxk = max(topk)
         batch_size = target.shape[0]
 
@@ -115,9 +151,17 @@ class Trainer(brainstate.util.PrettyObject):
             res.append(correct_k * 100.0 / batch_size)
         return res
 
+    def _process_input(self, inputs):
+        inputs = u.math.flatten(jnp.asarray(inputs), start_axis=1)
+        inputs = inputs.transpose((1, 0))  # [n_time, n_batch, n_feature]
+        if self.args.task == 'PSMNIST':
+            inputs = inputs[self.perm]
+        inputs = inputs.reshape(inputs.shape[0], -1, self.args.num_input)
+        return inputs
+
     @brainstate.compile.jit(static_argnums=0)
     def predict(self, inputs: jax.Array, targets: jax.Array):
-        inputs = jnp.asarray(inputs)
+        inputs = self._process_input(inputs)
 
         # add environment context
         model = brainstate.nn.EnvironContext(self.model, fit=False)
@@ -143,8 +187,7 @@ class Trainer(brainstate.util.PrettyObject):
 
     @brainstate.compile.jit(static_argnums=0)
     def bptt_train(self, inputs, targets):
-        assert inputs.ndim == 3, (f'required inputs shape of [n_time, n_batch, n_feature], '
-                                  f'but got {inputs.ndim}')
+        inputs = self._process_input(inputs)
 
         brainstate.nn.vmap_init_all_states(self.model, state_tag='hidden', axis_size=inputs.shape[1])
         model = brainstate.nn.EnvironContext(self.model, fit=True)
@@ -175,8 +218,7 @@ class Trainer(brainstate.util.PrettyObject):
 
     @brainstate.compile.jit(static_argnums=0)
     def online_train(self, inputs, targets):
-        assert inputs.ndim == 3, (f'required inputs shape of [n_time, n_batch, n_feature], '
-                                  f'but got {inputs.ndim}')
+        inputs = self._process_input(inputs)
 
         # assume the inputs have shape (time, batch, features, ...)
         n_time, n_batch = inputs.shape[:2]
@@ -282,7 +324,7 @@ class Trainer(brainstate.util.PrettyObject):
             # measure elapsed time
             end = time.time()
             if (i + 1) % self.args.print_freq == 0:
-                self.logger.warning(progress.display(i * self.args.batch_size))
+                self.logger.warning(progress.display(i))
 
         self.logger.warning(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'.format(top1=top1, top5=top5))
         # self.logger.flush()
@@ -317,7 +359,7 @@ class Trainer(brainstate.util.PrettyObject):
             end = time.time()
 
             if (i + 1) % self.args.print_freq == 0:
-                self.logger.warning(progress.display(i * self.args.batch_size))
+                self.logger.warning(progress.display(i))
         self.logger.warning(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'.format(top1=top1, top5=top5))
         # self.logger.flush()
         return top1.avg, top5.avg, losses.avg
@@ -329,10 +371,7 @@ class Trainer(brainstate.util.PrettyObject):
 
         for epoch in range(start_epoch, self.args.epochs):
             train_acc, train_loss = self.train_epoch(train_loader, epoch)
-            train_loader.reset()
-
             acc1, acc5, test_loss = self.validate_epoch(test_loader)
-            test_loader.reset()
 
             self.logger.warning(
                 f'Test Epoch: [{epoch}/{self.args.epochs}], '
@@ -375,11 +414,13 @@ class Trainer(brainstate.util.PrettyObject):
 
 
 def main():
+    args = parse_args()
+
     # get datasets and build dataloaders
-    train_loader, test_loader, input_size = load_shd_dataset(args)
+    train_loader, test_loader = load_mnist_dataset(args)
 
     # trainer and training
-    trainer = Trainer(input_size)
+    trainer = Trainer(args)
     trainer.f_train(train_loader, test_loader)
 
 

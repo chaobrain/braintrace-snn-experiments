@@ -30,7 +30,7 @@
 #
 #
 #
-#python bst_main.py --data D:/codes/githubs/SNN/EvNN/data/ --cache D:/codes/githubs/SNN/EvNN/cache/  --batch-size 40 --units 795 --unit-size 1 \
+#python train_shd_ssc.py --data D:/codes/githubs/SNN/EvNN/data/ --cache D:/codes/githubs/SNN/EvNN/cache/  --batch-size 40 --units 795 --unit-size 1 \
 #    --num-layers 1 --frame-size 128 --run-title egrud795_rerun \
 #    --train-epochs 500 --frame-time 25 --rnn-type gru \
 #    --learning-rate 0.0009975 --lr-gamma 0.8747 --lr-decay-epochs 56 \
@@ -47,7 +47,7 @@
 
 #
 #
-#python bst_main.py --batch-size 40 --units 795 --unit-size 1 \
+#python train_shd_ssc.py --batch-size 40 --units 795 --unit-size 1 \
 #    --num-layers 1 --frame-size 128 --run-title egrud795_rerun \
 #    --train-epochs 500 --frame-time 25 --rnn-type gru \
 #    --learning-rate 0.0009975 --lr-gamma 0.8747 --lr-decay-epochs 56 \

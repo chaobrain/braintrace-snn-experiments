@@ -23,7 +23,8 @@ import jax.numpy as jnp
 import numpy as np
 
 __all__ = [
-    'load_shd_dataset',
+    'load_shd_ssc_dataset',
+    'load_mnist_dataset',
 ]
 
 
@@ -97,6 +98,14 @@ def _get_shd_data(dataset):
     if platform.platform() == 'Linux-6.8.0-52-generic-x86_64-with-glibc2.35':
         root_path = '/home/chaomingwang/data/' + dataset + '/'
 
+    # 横琴A100
+    if platform.platform() == 'Linux-5.15.0-84-generic-x86_64-with-glibc2.31':
+        root_path = '/home/chaoming/data/' + dataset + '/'
+
+    # 加载数据
+    print(f"Loading dataset {dataset} from {root_path}")
+
+    # 转换为numpy array
     train_file = h5py.File(os.path.join(root_path, dataset.lower() + '_train.h5'), 'r')
     test_file = h5py.File(os.path.join(root_path, dataset.lower() + '_test.h5'), 'r')
 
@@ -107,7 +116,7 @@ def _get_shd_data(dataset):
     return (x_train, y_train), (x_test, y_test)
 
 
-def load_shd_dataset(args):
+def load_shd_ssc_dataset(args):
     T = 250
     max_time = 1.4
     in_dim = 700
@@ -115,3 +124,37 @@ def load_shd_dataset(args):
     train_loader = SpikeIterator(x_train, y_train, args.batch_size, T, in_dim, max_time, shuffle=True)
     test_loader = SpikeIterator(x_test, y_test, args.batch_size, T, in_dim, max_time, shuffle=False)
     return train_loader, test_loader, in_dim
+
+
+def load_mnist_dataset(args):
+    from torchvision import datasets, transforms
+    import torch
+
+    num_workers = 0 if platform.system() == 'Windows' else 10
+
+    num_classes = 10
+    dataset_train = datasets.MNIST(
+        os.path.join(args.data_dir, 'MNIST'),
+        train=True,
+        download=True,
+        transform=transforms.ToTensor()
+    )
+    dataset_test = datasets.MNIST(
+        os.path.join(args.data_dir, 'MNIST'),
+        train=False,
+        download=True,
+        transform=transforms.ToTensor()
+    )
+    train_loader = torch.utils.data.DataLoader(
+        dataset_train,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+    )
+    test_loader = torch.utils.data.DataLoader(
+        dataset_test,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+    )
+    return train_loader, test_loader

@@ -7,10 +7,10 @@
 
 For the main computation of the project, we use the following packages:
 
-- [brainunit](https://github.com/brainpy/brainunit)
-- [brainstate](https://github.com/brainpy/brainstate)
-- [brainscale](https://github.com/brainpy/brainscale)
-- [braintools](https://github.com/brainpy/braintools)
+- [brainunit](https://github.com/chaobrain/brainunit)
+- [brainstate](https://github.com/chaobrain/brainstate)
+- [brainscale](https://github.com/chaobrain/brainscale)
+- [braintools](https://github.com/chaobrain/braintools)
 - brainpy-dataset
 
 For the dataset generation, we use the following packages:

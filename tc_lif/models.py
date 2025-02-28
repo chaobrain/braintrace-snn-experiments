@@ -18,17 +18,11 @@
 import functools
 from typing import Callable
 
+import brainstate
 import jax
 import jax.numpy as jnp
 
 import brainscale
-import brainstate
-
-__all__ = [
-    'get_neuron',
-    'FFNetSHD',
-    'RecNetSHD',
-]
 
 
 class Exponential(brainstate.surrogate.Surrogate):
@@ -52,6 +46,33 @@ class Rectangle(brainstate.surrogate.Surrogate):
         return jnp.asarray(jnp.abs(x) < 0.5, dtype=x.dtype)
 
 
+class Sigmoid(brainstate.surrogate.Surrogate):
+    def __init__(self, alpha: float = 0.5):
+        self.alpha = alpha
+
+    def surrogate_grad(self, x) -> jax.Array:
+        return 1. / (2 * self.alpha * jnp.square(1 / self.alpha + jnp.abs(x)))
+
+
+class ActFun_adp(brainstate.surrogate.Surrogate):
+    def __init__(self, gamma: float = 0.5, lens: float = 0.5):
+        self.gamma = gamma
+        self.lens = lens
+        self.scale = 6.0
+        self.hight = .15
+
+    def surrogate_grad(self, x) -> jax.Array:
+        temp = (
+            self.gaussian(x, mu=0., sigma=self.lens) * (1. + self.hight)
+            - self.gaussian(x, mu=self.lens, sigma=self.scale * self.lens) * self.hight
+            - self.gaussian(x, mu=-self.lens, sigma=self.scale * self.lens) * self.hight
+        )
+        return temp * self.gamma
+
+    def gaussian(self, x, mu=0., sigma=.5):
+        return jnp.exp(-((x - mu) ** 2) / (2 * sigma ** 2)) / jnp.sqrt(2 * jnp.pi) / sigma
+
+
 def get_surrogate(name: str) -> brainstate.surrogate.Surrogate:
     if name == 'exp':
         return Exponential()
@@ -59,6 +80,10 @@ def get_surrogate(name: str) -> brainstate.surrogate.Surrogate:
         return Triangle()
     elif name == 'rectangle':
         return Rectangle()
+    elif name == ' sigmoid':
+        return Sigmoid()
+    elif name == 'gau':
+        return ActFun_adp()
     else:
         raise NotImplementedError
 
@@ -333,12 +358,15 @@ class TwoCompartmentLIF(brainstate.nn.Dynamics):
     ):
         super().__init__(in_size)
 
-        ones = jnp.ones(self.varshape, dtype=brainstate.environ.dftype())
+        # ones = jnp.ones(self.varshape, dtype=brainstate.environ.dftype())
         # self.beta1 = brainscale.ElemWiseParam(beta1, lambda w: w * ones)
         # self.beta2 = brainscale.ElemWiseParam(beta2, lambda w: w * ones)
-        self.beta1 = brainscale.ElemWiseParam(jnp.ones(self.varshape) * beta1)
-        self.beta2 = brainscale.ElemWiseParam(jnp.ones(self.varshape) * beta2)
 
+        # self.beta1 = brainscale.ElemWiseParam(jnp.ones(self.varshape) * beta1)
+        # self.beta2 = brainscale.ElemWiseParam(jnp.ones(self.varshape) * beta2)
+
+        self.beta1 = beta1
+        self.beta2 = beta2
         self.gamma = gamma
         self.v_threshold = v_threshold
         self.v_reset = v_reset
@@ -375,10 +403,10 @@ class TwoCompartmentLIF(brainstate.nn.Dynamics):
             vs = hard_reset(vs, spike_d, self.v_reset)
 
         # neuronal charge
-        beta1 = jax.nn.sigmoid(self.beta1.execute())
-        beta2 = jax.nn.sigmoid(self.beta2.execute())
-        vd = vd - beta1 * vs + x
-        vs = vs + beta2 * vd
+        # beta1 = jax.nn.sigmoid(self.beta1.execute())
+        # beta2 = jax.nn.sigmoid(self.beta2.execute())
+        vd = vd + self.beta1 * vs + x
+        vs = vs + self.beta2 * vd
 
         # neuronal_fire
         self.vd.value = vd
@@ -422,10 +450,22 @@ def get_neuron(args):
             beta1=args.beta1,
             beta2=args.beta2
         )
-        print(f"beta init from {jax.nn.sigmoid(args.beta1):.2f} and {jax.nn.sigmoid(args.beta2):.2f}")
+        print(f"beta init from {args.beta1:.2f} and {args.beta2:.2f}")
     else:
         raise NotImplementedError
     return node
+
+
+class RecurrentContainer(brainstate.nn.Module):
+    def __init__(self, neuron: brainstate.nn.Neuron, ):
+        super().__init__()
+
+        self.neuron = neuron
+        self.recurrent_weight = brainscale.nn.Linear(neuron.in_size, neuron.in_size)
+
+    def update(self, ff_x):
+        rec_x = self.recurrent_weight(self.neuron.get_spike())
+        return self.neuron(rec_x + ff_x)
 
 
 class FFNetSHD(brainstate.nn.Module):
@@ -455,7 +495,14 @@ class FFNetSHD(brainstate.nn.Module):
         A sequential container of the network layers.
     """
 
-    def __init__(self, in_dim=8, hidden=128, out_dim=20, spiking_neuron=None, drop=0.0):
+    def __init__(
+        self,
+        in_dim: int = 8,
+        hidden: int = 128,
+        out_dim: int = 20,
+        spiking_neuron=None,
+        drop: float = 0.0
+    ):
         super().__init__()
         layers = []
         layers += [
@@ -496,18 +543,6 @@ class FFNetSHD(brainstate.nn.Module):
         return self.features(x)
 
 
-class RecurrentContainer(brainstate.nn.Module):
-    def __init__(self, neuron: brainstate.nn.Neuron, ):
-        super().__init__()
-
-        self.neuron = neuron
-        self.recurrent_weight = brainscale.nn.Linear(neuron.in_size, neuron.in_size)
-
-    def update(self, ff_x):
-        rec_x = self.recurrent_weight(self.neuron.get_spike())
-        return self.neuron(rec_x + ff_x)
-
-
 class RecNetSHD(brainstate.nn.Module):
     """
     Recurrent Neural Network for Sequential Hierarchical Decision-making (RecNetSHD).
@@ -535,7 +570,14 @@ class RecNetSHD(brainstate.nn.Module):
         A sequential container of the network layers.
     """
 
-    def __init__(self, in_dim=8, hidden=128, out_dim=20, spiking_neuron=None, drop=0.0):
+    def __init__(
+        self,
+        in_dim: int = 8,
+        hidden: int = 128,
+        out_dim: int = 20,
+        spiking_neuron=None,
+        drop: float = 0.0
+    ):
         super().__init__()
         layers = []
         layers += [
@@ -572,5 +614,65 @@ class RecNetSHD(brainstate.nn.Module):
         AssertionError
             If the input `x` is not a 1-dimensional array.
         """
+        assert x.ndim == 1, 'require data with the shape of [n_feature]'
+        return self.features(x)
+
+
+class RecNetMnist(brainstate.nn.Module):
+    def __init__(
+        self,
+        in_dim: int = 8,
+        spiking_neuron=None
+    ):
+        super().__init__()
+        layers = []
+        layers += [
+            brainscale.nn.Linear(in_dim, 64),
+            RecurrentContainer(spiking_neuron(64, v_threshold=1.0))
+        ]
+        layers += [
+            brainscale.nn.Linear(64, 256),
+            RecurrentContainer(spiking_neuron(256, v_threshold=1.0))
+        ]
+        layers += [
+            brainscale.nn.Linear(256, 256),
+            spiking_neuron(256, v_threshold=1.0)
+        ]
+        layers += [
+            brainscale.nn.Linear(256, 10)
+        ]
+        self.features = brainstate.nn.Sequential(*layers)
+
+    def update(self, x):
+        assert x.ndim == 1, 'require data with the shape of [n_feature]'
+        return self.features(x)
+
+
+class FFNetMnist(brainstate.nn.Module):
+    def __init__(
+        self,
+        in_dim: int = 8,
+        spiking_neuron=None,
+    ):
+        super().__init__()
+        layers = []
+        layers += [
+            brainscale.nn.Linear(in_dim, 64),
+            spiking_neuron(64)
+        ]
+        layers += [
+            brainscale.nn.Linear(64, 256),
+            spiking_neuron(256)
+        ]
+        layers += [
+            brainscale.nn.Linear(256, 256),
+            spiking_neuron(256)
+        ]
+        layers += [
+            brainscale.nn.Linear(256, 10)
+        ]
+        self.features = brainstate.nn.Sequential(*layers)
+
+    def update(self, x):
         assert x.ndim == 1, 'require data with the shape of [n_feature]'
         return self.features(x)
