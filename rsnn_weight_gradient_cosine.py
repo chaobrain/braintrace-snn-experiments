@@ -391,7 +391,7 @@ def compare_gradient_by_neuromorphic_data(fn='analysis/jac_cosine_sim', frac_sim
   if not os.path.exists(fn):
     os.makedirs(fn)
   bst.environ.set(mode=bst.mixin.JointMode(bst.mixin.Batching(), bst.mixin.Training()), dt=1.0)
-  # bst.random.seed(1)
+  # brainstate.random.seed(1)
 
   n_rec = 200
   n_layer = 1
@@ -449,7 +449,7 @@ def compare_gradient_multi_layer_by_neuromorphic_data(
   if not os.path.exists(fn):
     os.makedirs(fn)
   bst.environ.set(mode=bst.mixin.JointMode(bst.mixin.Batching(), bst.mixin.Training()), dt=1.0)
-  # bst.random.seed(1)
+  # brainstate.random.seed(1)
 
   n_rec = 200
   results = dict()

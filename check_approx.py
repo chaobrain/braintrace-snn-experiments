@@ -96,7 +96,7 @@ def align_pre_visualize_x_truncated_normal_df_uniform(r=1000, m=10, n=10):
   def sample(x_scale, b_f):
     b = 1000.
     left = bst.random.truncated_normal(0., b, [r, m], x_mu, x_scale)
-    # left = bst.random.uniform(0., x_scale, [r, m])
+    # left = brainstate.random.uniform(0., x_scale, [r, m])
     right = bst.random.uniform(0., b_f, [r, n])
     l1 = jax.numpy.einsum('ri,rj->ij', left, right)
     l2 = jax.numpy.outer(left.mean(0), right.sum(0))

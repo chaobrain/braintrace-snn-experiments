@@ -250,12 +250,12 @@ def _check_jacobian(
   states.assign_values(state_vals)
 
   # diagonal
-  # diagonal1 = bst.transform.vector_grad(f, argnums=0)(s, inputs)
+  # diagonal1 = brainstate.transform.vector_grad(f, argnums=0)(s, inputs)
   # states.assign_values(state_vals)
   with bsc.stop_param_gradients():
     D = np.asarray(jax.jacrev(f, argnums=0)(s, inputs))
     states.assign_values(state_vals)
-    # diagonal = bst.transform.vector_grad(f, argnums=0)(s, inputs)
+    # diagonal = brainstate.transform.vector_grad(f, argnums=0)(s, inputs)
     # states.assign_values(state_vals)
     # D = np.diag(diagonal)
   # diff = diagonal1 - diagonal
@@ -507,7 +507,7 @@ def compare_jacobian_approx_on_random_data():
   n_seq = 1000
 
   data = RandomDataset(n_seq, n_in, n_out, prob=0.01)
-  # args = bst.util.DotDict(rec_wscale=0.1, ff_wscale=0.1, tau_mem=10.)
+  # args = brainstate.util.DotDict(rec_wscale=0.1, ff_wscale=0.1, tau_mem=10.)
   # model_cls = LIF_Delta_Dense_Layer
   args = bst.util.DotDict(rec_wscale=40., ff_wscale=100., tau_mem=10., kwargs=dict(tau_syn=10.0, tau_a=100.0))
   model_cls = ALIF_ExpCu_Dense_Layer
@@ -523,43 +523,43 @@ def compare_jacobian_approx_on_real_dataset():
   n_rec = 100
   spk_fun = bst.surrogate.ReluGrad(width=0.3)
   spk_fun = bst.surrogate.ReluGrad(width=1.)
-  # spk_fun = bst.surrogate.S2NN(alpha=8.0, beta=2.0)
-  # spk_fun = bst.surrogate.LeakyRelu(alpha=0.01)
-  # spk_fun = bst.surrogate.MultiGaussianGrad()
+  # spk_fun = brainstate.surrogate.S2NN(alpha=8.0, beta=2.0)
+  # spk_fun = brainstate.surrogate.LeakyRelu(alpha=0.01)
+  # spk_fun = brainstate.surrogate.MultiGaussianGrad()
 
   for n_rec in [10, 50, 100, 200, 300, 400, 500]:
     # data
     args = bst.util.DotDict(batch_size=1, n_data_worker=1, drop_last=False, dataset='N-MNIST', shuffle=False)
-    # args = bst.util.DotDict(batch_size=1, n_data_worker=1, drop_last=False, dataset='gesture', data_length=200)
-    # args = bst.util.DotDict(batch_size=1, n_data_worker=1, drop_last=False, dataset='gesture', data_length=500)
-    # args = bst.util.DotDict(batch_size=1, n_data_worker=1, drop_last=False, dataset='SHD')
+    # args = brainstate.util.DotDict(batch_size=1, n_data_worker=1, drop_last=False, dataset='gesture', data_length=200)
+    # args = brainstate.util.DotDict(batch_size=1, n_data_worker=1, drop_last=False, dataset='gesture', data_length=500)
+    # args = brainstate.util.DotDict(batch_size=1, n_data_worker=1, drop_last=False, dataset='SHD')
     dataset = get_snn_data(args)
 
     # model
     args = bst.util.DotDict(rec_wscale=0.1, ff_wscale=0.1, tau_mem=10.)
     args = bst.util.DotDict(rec_wscale=1, ff_wscale=10, tau_mem=10.)
-    # args = bst.util.DotDict(rec_wscale=2, ff_wscale=2, tau_mem=10.)
-    # args = bst.util.DotDict(rec_wscale=1, ff_wscale=2, tau_mem=10.)
-    # args = bst.util.DotDict(rec_wscale=0.1, ff_wscale=2, tau_mem=10.)
+    # args = brainstate.util.DotDict(rec_wscale=2, ff_wscale=2, tau_mem=10.)
+    # args = brainstate.util.DotDict(rec_wscale=1, ff_wscale=2, tau_mem=10.)
+    # args = brainstate.util.DotDict(rec_wscale=0.1, ff_wscale=2, tau_mem=10.)
     model_cls = LIF_Delta_Dense_Layer
-    # args = bst.util.DotDict(rec_wscale=10., ff_wscale=100., tau_mem=10., kwargs=dict(tau_syn=10.0, ))
-    # args = bst.util.DotDict(rec_wscale=20., ff_wscale=40., tau_mem=10., kwargs=dict(tau_syn=10.0, ))
-    # args = bst.util.DotDict(rec_wscale=40., ff_wscale=100., tau_mem=10., kwargs=dict(tau_syn=10.0, ))
-    # args = bst.util.DotDict(rec_wscale=100., ff_wscale=100., tau_mem=10., kwargs=dict(tau_syn=10.0, ))
+    # args = brainstate.util.DotDict(rec_wscale=10., ff_wscale=100., tau_mem=10., kwargs=dict(tau_syn=10.0, ))
+    # args = brainstate.util.DotDict(rec_wscale=20., ff_wscale=40., tau_mem=10., kwargs=dict(tau_syn=10.0, ))
+    # args = brainstate.util.DotDict(rec_wscale=40., ff_wscale=100., tau_mem=10., kwargs=dict(tau_syn=10.0, ))
+    # args = brainstate.util.DotDict(rec_wscale=100., ff_wscale=100., tau_mem=10., kwargs=dict(tau_syn=10.0, ))
     # model_cls = LIF_ExpCu_Dense_Layer
-    # args = bst.util.DotDict(rec_wscale=40., ff_wscale=100., tau_mem=10., kwargs=dict(tau_std=200.0, tau_syn=10.0))
+    # args = brainstate.util.DotDict(rec_wscale=40., ff_wscale=100., tau_mem=10., kwargs=dict(tau_std=200.0, tau_syn=10.0))
     # model_cls = LIF_STDExpCu_Dense_Layer
-    # args = bst.util.DotDict(rec_wscale=50., ff_wscale=80., tau_mem=10., kwargs=dict(tau_syn=10, tau_f=10, tau_d=100,))
-    # args = bst.util.DotDict(rec_wscale=5., ff_wscale=20., tau_mem=10., kwargs=dict(tau_syn=10, tau_f=10, tau_d=100))
+    # args = brainstate.util.DotDict(rec_wscale=50., ff_wscale=80., tau_mem=10., kwargs=dict(tau_syn=10, tau_f=10, tau_d=100,))
+    # args = brainstate.util.DotDict(rec_wscale=5., ff_wscale=20., tau_mem=10., kwargs=dict(tau_syn=10, tau_f=10, tau_d=100))
     # model_cls = LIF_STPExpCu_Dense_Layer
 
-    # args = bst.util.DotDict(rec_wscale=0.1, ff_wscale=0.1, tau_mem=10., kwargs=dict())
+    # args = brainstate.util.DotDict(rec_wscale=0.1, ff_wscale=0.1, tau_mem=10., kwargs=dict())
     # model_cls = ALIF_Delta_Dense_Layer
-    # args = bst.util.DotDict(rec_wscale=40., ff_wscale=100., tau_mem=10., kwargs=dict(tau_syn=10.0, tau_a=100.0))
+    # args = brainstate.util.DotDict(rec_wscale=40., ff_wscale=100., tau_mem=10., kwargs=dict(tau_syn=10.0, tau_a=100.0))
     # model_cls = ALIF_ExpCu_Dense_Layer
-    # args = bst.util.DotDict(rec_wscale=10., ff_wscale=100., tau_mem=10., kwargs=dict(tau_std=100., tau_syn=10))
+    # args = brainstate.util.DotDict(rec_wscale=10., ff_wscale=100., tau_mem=10., kwargs=dict(tau_std=100., tau_syn=10))
     # model_cls = ALIF_STDExpCu_Dense_Layer
-    # args = bst.util.DotDict(rec_wscale=6, ff_wscale=40, tau_mem=5, kwargs=dict(tau_syn=5, tau_f=10, tau_d=100, tau_a=100))
+    # args = brainstate.util.DotDict(rec_wscale=6, ff_wscale=40, tau_mem=5, kwargs=dict(tau_syn=5, tau_f=10, tau_d=100, tau_a=100))
     # model_cls = ALIF_STPExpCu_Dense_Layer
 
     args.update(spk_fun=spk_fun, num_rec=n_rec, model_cls=model_cls)
