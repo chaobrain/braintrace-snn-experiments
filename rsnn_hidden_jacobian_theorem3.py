@@ -112,12 +112,6 @@ def _compute_cosine_similarity(left, rights, num: int):
     return cosines
 
 
-class List(list):
-    def append(self, __object):
-        super().append(__object)
-        return self
-
-
 def _compare(
     dataloader,
     num_in: int,
