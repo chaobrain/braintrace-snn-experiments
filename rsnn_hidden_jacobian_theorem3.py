@@ -220,7 +220,8 @@ def compare_jacobian_approx_on_real_dataset(fn='analysis/jac_cosine_sim_theorem3
 
         ('SHD', None, LIF_Delta_Dense_Layer, dict(rec_wscale=0.1, ff_wscale=0.1, tau_mem=10.)),
         (
-        'SHD', None, LIF_ExpCu_Dense_Layer, dict(rec_wscale=4., ff_wscale=20., tau_mem=10., kwargs=dict(tau_syn=10.0))),
+            'SHD', None, LIF_ExpCu_Dense_Layer,
+            dict(rec_wscale=4., ff_wscale=20., tau_mem=10., kwargs=dict(tau_syn=10.0))),
         ('SHD', None, LIF_STDExpCu_Dense_Layer,
          dict(rec_wscale=8., ff_wscale=20., tau_mem=10., kwargs=dict(tau_std=200.0, tau_syn=10.0))),
         ('SHD', None, LIF_STPExpCu_Dense_Layer,
@@ -318,7 +319,7 @@ def compare_jacobian_approx_on_real_dataset(fn='analysis/jac_cosine_sim_theorem3
 def visualize_results():
     import seaborn
     seaborn.set(font_scale=1.2, style=None)
-    # plt.style.use(['science', 'nature', 'notebook'])
+    plt.style.use(['science', 'nature', 'notebook'])
 
     with open(
         'analysis/jac_cosine_sim_theorem3/t2/'
@@ -363,15 +364,18 @@ def visualize_results():
             plt.legend(loc='best')
         else:
             plt.legend(loc='lower right')
-        plt.xlim(-2, datalength +2)
-        plt.ylim(0., 1.01)
-        # plt.suptitle(model_mapping[model_name], fontsize=16)
+        plt.xlim(-2, datalength + 2)
+        plt.ylim(0., 1.05)
+        plt.suptitle(model_mapping[model_name], fontsize=16)
         # plt.suptitle(model_mapping[model_name])
 
         # ax.set_rasterized(True)
-        plt.savefig(f'analysis/jac_cosine_sim_theorem3/t2/{data_name}-{datalength}-{model_name}.svg',
-                    dpi=300, transparent=True)
-        seaborn.despine()
+        plt.savefig(
+            f'analysis/jac_cosine_sim_theorem3/t2/{data_name}-{datalength}-{model_name}.svg',
+            dpi=300,
+            transparent=True
+        )
+        # seaborn.despine()
         plt.show()
         plt.close()
 

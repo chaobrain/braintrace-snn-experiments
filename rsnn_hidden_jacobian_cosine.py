@@ -15,6 +15,7 @@
 
 
 import argparse
+import os
 
 
 def _set_gpu_preallocation(mode: float):
@@ -234,7 +235,7 @@ def _check_jacobian(
     # states and variables
     states = model.states()
     state_vals = states.to_dict_values()
-    etrace_vars = states.subset(brainscale.ETraceVar)
+    etrace_vars = states.subset(brainscale.ETraceState)
     get_state = lambda: jnp.concat([v.value.flatten() for v in etrace_vars.values()])
 
     def f(state, x):
@@ -290,11 +291,21 @@ def compare_jacobian_approximation_on_artificial_data():
     n = 1000
     setting = dict(n=n, width=0.5, rec_scale=20., tau_mem=10., ff_scale=4.)
     setting = dict(n=n, width=0.5, rec_scale=10., tau_mem=10., ff_scale=4.)
-    brainstate.environ.set(mode=brainstate.mixin.JointMode(brainstate.mixin.Batching(), brainstate.mixin.Training()), dt=0.1)
+    brainstate.environ.set(
+        mode=brainstate.mixin.JointMode(brainstate.mixin.Batching(), brainstate.mixin.Training()),
+        dt=0.1
+    )
     for model_cls in [
-        LIF_STPExpCu_Dense_Layer, LIF_STDExpCu_Dense_Layer, LIF_ExpCu_Dense_Layer, LIF_Delta_Dense_Layer,
-        ALIF_STPExpCu_Dense_Layer, ALIF_STDExpCu_Dense_Layer, ALIF_ExpCu_Dense_Layer, ALIF_Delta_Dense_Layer,
-        LIF_STDExpCu_Dense_Layer, ALIF_STDExpCu_Dense_Layer,
+        LIF_STPExpCu_Dense_Layer,
+        LIF_STDExpCu_Dense_Layer,
+        LIF_ExpCu_Dense_Layer,
+        LIF_Delta_Dense_Layer,
+        ALIF_STPExpCu_Dense_Layer,
+        ALIF_STDExpCu_Dense_Layer,
+        ALIF_ExpCu_Dense_Layer,
+        ALIF_Delta_Dense_Layer,
+        LIF_STDExpCu_Dense_Layer,
+        ALIF_STDExpCu_Dense_Layer,
     ]:
         rr = []
         # for p_rec_spk in [0.1]:
@@ -312,9 +323,9 @@ def compare_jacobian_approximation_on_artificial_data():
 
 def _compare_jac_one_step(model: brainstate.nn.Module, idx, inp):
     states = model.states()
-    etrace_states = states.subset(brainscale.ETraceVar)
+    etrace_states = states.subset(brainscale.ETraceState)
     state_vals = states.to_dict_values()
-    hidden = jnp.concat([v.value.flatten() for v in etrace_states.values()])
+    hidden = u.math.concatenate([v.value.flatten() for v in etrace_states.values()])
 
     def step_run(hid, i, x):
         with brainstate.environ.context(i=i, t=brainstate.environ.get_dt() * i, fit=True):
@@ -350,7 +361,7 @@ def _compare_jac_all_steps(model: brainstate.nn.Module, inputs):
             return model(x)
 
     def all_run(hid, xs):
-        etrace_states = model.states().subset(brainscale.ETraceVar)
+        etrace_states = model.states().subset(brainscale.ETraceState)
 
         i = 0
         for k in etrace_states:
@@ -364,7 +375,7 @@ def _compare_jac_all_steps(model: brainstate.nn.Module, inputs):
         return new_hidden, spks
 
     def jacobian():
-        etrace_states = model.states().subset(brainscale.ETraceVar)
+        etrace_states = model.states().subset(brainscale.ETraceState)
         hidden = jnp.concat([v.value.flatten() for v in etrace_states.values()])
         jac, spks = jax.jacrev(all_run, argnums=0, has_aux=True)(hidden, inputs)
         return jac, spks
@@ -572,7 +583,7 @@ def compare_jacobian_approx_on_real_dataset():
 
         # computing
         print(n_rec, args)
-        r = _compare(dataset.train_loader, np.prod(dataset.in_shape), **args, num_data=10)
+        r = _compare(dataset.train_loader, int(np.prod(dataset.in_shape)), **args, num_data=10)
 
 
 def compare_jacobian_approx_on_real_dataset_v2(fn='analysis/jac_cosine_sim'):
@@ -616,9 +627,8 @@ def compare_jacobian_approx_on_real_dataset_v2(fn='analysis/jac_cosine_sim'):
          dict(rec_wscale=6, ff_wscale=40, tau_mem=5, kwargs=dict(tau_syn=5, tau_f=10, tau_d=100, tau_a=100))),
 
         ('SHD', None, LIF_Delta_Dense_Layer, dict(rec_wscale=0.1, ff_wscale=0.1, tau_mem=10.)),
-        (
-            'SHD', None, LIF_ExpCu_Dense_Layer,
-            dict(rec_wscale=4., ff_wscale=20., tau_mem=10., kwargs=dict(tau_syn=10.0))),
+        ('SHD', None, LIF_ExpCu_Dense_Layer,
+         dict(rec_wscale=4., ff_wscale=20., tau_mem=10., kwargs=dict(tau_syn=10.0))),
         ('SHD', None, LIF_STDExpCu_Dense_Layer,
          dict(rec_wscale=8., ff_wscale=20., tau_mem=10., kwargs=dict(tau_std=200.0, tau_syn=10.0))),
         ('SHD', None, LIF_STPExpCu_Dense_Layer,
@@ -646,7 +656,7 @@ def compare_jacobian_approx_on_real_dataset_v2(fn='analysis/jac_cosine_sim'):
             print(f'Processing {data_name} {datalength} with {model.__name__}')
             r = _compare(
                 dataset.train_loader,
-                np.prod(dataset.in_shape),
+                int(np.prod(dataset.in_shape)),
                 n_rec,
                 model_cls=model,
                 **args,
@@ -691,7 +701,7 @@ def compare_jacobian_approx_when_recurrent_size_increases(fn='analysis/jac_cosin
                 print(data_args)
                 print(args)
                 try:
-                    r = _compare(dataset.train_loader, np.prod(dataset.in_shape), **args, num_data=200)
+                    r = _compare(dataset.train_loader, int(np.prod(dataset.in_shape)), **args, num_data=200)
                     final_results[(data_name, datalength, n_rec, model_cls.__name__)] = {
                         'cos_single_steps': np.asarray(r[0]),
                         'cos_all_steps': np.asarray(r[1]),
@@ -733,7 +743,7 @@ def compare_jacobian_approx_when_ff_conn_increases(fn='analysis/jac_cosine_sim')
                 print(data_args)
                 print(args)
                 try:
-                    r = _compare(dataset.train_loader, np.prod(dataset.in_shape), **args, num_data=200)
+                    r = _compare(dataset.train_loader, int(np.prod(dataset.in_shape)), **args, num_data=200)
                     final_results[(data_name, data_length, ff_frac, model_cls.__name__)] = {
                         'cos_single_steps': np.asarray(r[0]),
                         'cos_all_steps': np.asarray(r[1]),
@@ -774,7 +784,7 @@ def compare_jacobian_approx_when_rec_conn_increases(fn='analysis/jac_cosine_sim'
                 print(data_args)
                 print(args)
                 try:
-                    r = _compare(dataset.train_loader, np.prod(dataset.in_shape), **args, num_data=200)
+                    r = _compare(dataset.train_loader, int(np.prod(dataset.in_shape)), **args, num_data=200)
                     final_results[(data_name, data_length, rec_frac, model_cls.__name__)] = {
                         'cos_single_steps': np.asarray(r[0]),
                         'cos_all_steps': np.asarray(r[1]),
@@ -797,9 +807,9 @@ if __name__ == '__main__':
     # compare_jacobian_approximation_on_artificial_data()
     # compare_jacobian_approx_on_real_dataset()
 
-    # compare_jacobian_approx_on_real_dataset_v2()
+    compare_jacobian_approx_on_real_dataset_v2()
 
     # compare_jacobian_approx_when_recurrent_size_increases()
 
     # compare_jacobian_approx_when_ff_conn_increases()
-    compare_jacobian_approx_when_rec_conn_increases()
+    # compare_jacobian_approx_when_rec_conn_increases()
