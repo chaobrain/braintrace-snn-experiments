@@ -55,13 +55,13 @@ def define_device_args() -> argparse.Namespace:
 
 define_device_args()
 
-import brainscale as bsc
-import braintools as bt
+import brainscale
+import braintools
 import jax
 
 import os
 
-import brainstate as bst
+import brainstate
 import jax.numpy as jnp
 import numpy as np
 from torch.utils.data import DataLoader
@@ -86,8 +86,9 @@ from rsnn_hidden_jacobian_cosine import model_setting_1, model_setting_2
 
 
 def compare_gradient_of_five_layer_net_by_random_data():
-    bst.environ.set(mode=bst.mixin.JointMode(bst.mixin.Batching(), bst.mixin.Training()), dt=1.0)
-    bst.random.seed(1)
+    brainstate.environ.set(mode=brainstate.mixin.JointMode(brainstate.mixin.Batching(), brainstate.mixin.Training()),
+                           dt=1.0)
+    brainstate.random.seed(1)
 
     # sets = dict(n_layer=1, model='lif_std_expcu_dense', rec_wscale=1.0, ff_wscale=1.0, spk_reset='soft', n_rank=80, tau_std=200.0, tau_syn=10.0, tau_v=10.,)
     # sets = dict(n_layer=2, model='lif_std_expcu_dense', rec_wscale=1.0, ff_wscale=1.0, spk_reset='soft', n_rank=80, tau_std=200.0, tau_syn=10.0, tau_v=10.,)
@@ -155,14 +156,14 @@ def compare_gradient_of_five_layer_net_by_random_data():
                 tau_v=10.)
 
     print(sets)
-    args = bst.util.DotDict(n_layer=2, model='lif_expcu_dense',
-                            lr=0.0005, epochs=200, rec_wscale=10.0, ff_wscale=10.0,
-                            dt=0.1, loss='cel', mode='train', dataset='N-MNIST',
-                            tau_v=80.0, tau_v_sigma=1.0, tau_a=200.0, beta=1.0, V_th=1.0, spk_reset='hard',
-                            tau_std=200.0, tau_syn=10.0, tau_o=80.0, spk_reg=0.0,
-                            spk_reg_rate=10.0, v_reg=0.0, v_reg_low=-0.4, v_reg_high=1.0, weight_L1=0.0,
-                            weight_L2=0.0, method='expsm_diag', n_rank=5, warmup_ratio=0.0,
-                            record_period=10, data_length=200, devices='0')
+    args = brainstate.util.DotDict(n_layer=2, model='lif_expcu_dense',
+                                   lr=0.0005, epochs=200, rec_wscale=10.0, ff_wscale=10.0,
+                                   dt=0.1, loss='cel', mode='train', dataset='N-MNIST',
+                                   tau_v=80.0, tau_v_sigma=1.0, tau_a=200.0, beta=1.0, V_th=1.0, spk_reset='hard',
+                                   tau_std=200.0, tau_syn=10.0, tau_o=80.0, spk_reg=0.0,
+                                   spk_reg_rate=10.0, v_reg=0.0, v_reg_low=-0.4, v_reg_high=1.0, weight_L1=0.0,
+                                   weight_L2=0.0, method='expsm_diag', n_rank=5, warmup_ratio=0.0,
+                                   record_period=10, data_length=200, devices='0')
     args.update(sets)
 
     n_in = 100
@@ -171,24 +172,24 @@ def compare_gradient_of_five_layer_net_by_random_data():
     n_batch = 16
     n_seq = 1000
     n_rank = 10
-    model = ETraceDenseNet(n_in, n_rec, n_out, args, spk_fun=bst.surrogate.ReluGrad(width=0.5))
-    weights = model.states().subset(bst.ParamState)
+    model = ETraceDenseNet(n_in, n_rec, n_out, args, spk_fun=brainstate.surrogate.ReluGrad(width=0.5))
+    weights = model.states().subset(brainstate.ParamState)
 
     def step_to_visualize(i, inp):
-        with bst.environ.context(i=i, t=i * bst.environ.get_dt(), fit=True):
+        with brainstate.environ.context(i=i, t=i * brainstate.environ.get_dt(), fit=True):
             out = model(inp)
         return model.visualize_variables()
 
     def loss_fun(i, inp, target):
-        with bst.environ.context(i=i, t=i * bst.environ.get_dt(), fit=True):
+        with brainstate.environ.context(i=i, t=i * brainstate.environ.get_dt(), fit=True):
             out = model(inp)
-        return bt.metric.softmax_cross_entropy_with_integer_labels(out, target).mean()
+        return braintools.metric.softmax_cross_entropy_with_integer_labels(out, target).mean()
 
     def compute_etrace_grad(inputs, targets):
         # etrace = nn.DiagExpSmOnAlgorithm(partial(loss_fun, target=targets), decay_or_rank=n_rank)
-        etrace = bsc.DiagParamDimAlgorithm(partial(loss_fun, target=targets), )
-        etrace.compile_graph(0, jax.ShapeDtypeStruct((n_batch, n_in), bst.environ.dftype()))
-        f_grad = bst.transform.grad(etrace, grad_vars=weights)
+        etrace = brainscale.ParamDimVjpAlgorithm(partial(loss_fun, target=targets), )
+        etrace.compile_graph(0, jax.ShapeDtypeStruct((n_batch, n_in), brainstate.environ.dftype()))
+        f_grad = brainstate.augment.grad(etrace, grad_vars=weights)
 
         def step(prev_grad, inp):
             i, inp = inp
@@ -197,23 +198,23 @@ def compare_gradient_of_five_layer_net_by_random_data():
             return new_grads, None
 
         grads = jax.tree.map(jnp.zeros_like, weights.to_dict_values())
-        grads, _ = bst.transform.scan(step, grads, (indices, inputs))
+        grads, _ = brainstate.compile.scan(step, grads, (indices, inputs))
         return grads
 
     def compute_bptt_grad(inputs, targets):
         def global_loss():
-            losses = bst.transform.for_loop(partial(loss_fun, target=targets), indices, inputs)
+            losses = brainstate.compile.for_loop(partial(loss_fun, target=targets), indices, inputs)
             return losses.sum()
 
-        return bst.transform.grad(global_loss, grad_vars=weights)()
+        return brainstate.augment.grad(global_loss, grad_vars=weights)()
 
     indices = jnp.arange(n_seq)
-    inp_spks = bst.random.random((n_seq, n_batch, n_in)) < 0.1
-    inp_spks = jnp.asarray(inp_spks, dtype=bst.environ.dftype())
-    target_outs = bst.random.randint(0, n_out, (n_batch,))
+    inp_spks = brainstate.random.random((n_seq, n_batch, n_in)) < 0.1
+    inp_spks = jnp.asarray(inp_spks, dtype=brainstate.environ.dftype())
+    target_outs = brainstate.random.randint(0, n_out, (n_batch,))
 
-    bst.init_states(model, n_batch)
-    visualize_outs = bst.transform.for_loop(step_to_visualize, indices, inp_spks)
+    brainstate.nn.init_all_states(model, n_batch)
+    visualize_outs = brainstate.compile.for_loop(step_to_visualize, indices, inp_spks)
     visualize.plot_multilayer_lif(inp_spks,
                                   visualize_outs['rec_s'],
                                   visualize_outs['rec_v'],
@@ -221,11 +222,11 @@ def compare_gradient_of_five_layer_net_by_random_data():
                                   show=True,
                                   num_vis=1)
 
-    bst.init_states(model, n_batch)
+    brainstate.nn.init_all_states(model, n_batch)
     etrace_grads = compute_etrace_grad(inp_spks, target_outs)
     etrace_grads = jax.tree.map(lambda x: x, etrace_grads)
 
-    bst.init_states(model, n_batch)
+    brainstate.nn.init_all_states(model, n_batch)
     bptt_grads = compute_bptt_grad(inp_spks, target_outs)
 
     from pprint import pprint
@@ -233,7 +234,7 @@ def compare_gradient_of_five_layer_net_by_random_data():
 
 
 class ETraceDenseNetV2(NetWithMemSpkRegularize):
-    def __init__(self, n_in, n_rec, n_out, model_cls, args, spk_fun: Callable = bst.surrogate.ReluGrad()):
+    def __init__(self, n_in, n_rec, n_out, model_cls, args, spk_fun: Callable = brainstate.surrogate.ReluGrad()):
         super().__init__()
 
         # arguments
@@ -244,12 +245,12 @@ class ETraceDenseNetV2(NetWithMemSpkRegularize):
         tau_o = args.pop('tau_o')
         kwargs = args.pop('kwargs', dict())
 
-        rec_init = bst.init.KaimingNormal(scale=args.pop('rec_wscale'))
-        ff_init = bst.init.KaimingNormal(scale=args.pop('ff_wscale'))
+        rec_init = brainstate.init.KaimingNormal(scale=args.pop('rec_wscale'))
+        ff_init = brainstate.init.KaimingNormal(scale=args.pop('ff_wscale'))
 
         # recurrent layers
-        bst.util.clear_name_cache()
-        self.rec_layers = bst.visible_module_list()
+        brainstate.util.clear_name_cache()
+        self.rec_layers = []
         for layer_idx in range(self.n_layer):
             rec = model_cls(n_rec=n_rec,
                             n_in=n_in,
@@ -262,11 +263,13 @@ class ETraceDenseNetV2(NetWithMemSpkRegularize):
             self.rec_layers.append(rec)
 
         # output layer
-        self.out = bsc.LeakyRateReadout(in_size=n_rec,
-                                        out_size=n_out,
-                                        tau=tau_o,
-                                        w_init=bst.init.KaimingNormal(),
-                                        name='out', )
+        self.out = brainscale.nn.LeakyRateReadout(
+            in_size=n_rec,
+            out_size=n_out,
+            tau=tau_o,
+            w_init=brainstate.init.KaimingNormal(),
+            name='out',
+        )
 
     def update(self, x):
         for i in range(self.n_layer):
@@ -274,7 +277,7 @@ class ETraceDenseNetV2(NetWithMemSpkRegularize):
         return self.out(x)
 
     def visualize_variables(self) -> dict:
-        neurons = tuple(self.nodes().subset(bst.nn.Neuron).unique().values())
+        neurons = tuple(self.nodes().subset(brainstate.nn.Neuron).unique().values())
         outs = {
             'out_v': self.out.r.value,
             'rec_v': [l.V.value for l in neurons],
@@ -294,17 +297,17 @@ def _compare(
     frac_sim: float = 0.,
     diag_jacobian: str = 'vjp'
 ):
-    weights = model.states().subset(bst.ParamState)
+    weights = model.states().subset(brainstate.ParamState)
 
     def step_to_visualize(i, inp):
-        with bst.environ.context(i=i, t=i * bst.environ.get_dt(), fit=True):
+        with brainstate.environ.context(i=i, t=i * brainstate.environ.get_dt(), fit=True):
             out = model(inp)
         return model.visualize_variables()
 
     def run_to_visualize(inputs):
-        bst.init_states(model, 1)
+        brainstate.nn.init_all_states(model, 1)
         indices = np.arange(inputs.shape[0])
-        visualize_outs = bst.transform.for_loop(step_to_visualize, indices, inputs)
+        visualize_outs = brainstate.compile.for_loop(step_to_visualize, indices, inputs)
         visualize.plot_multilayer_lif(inputs,
                                       visualize_outs['rec_s'],
                                       visualize_outs['rec_v'],
@@ -313,32 +316,32 @@ def _compare(
                                       num_vis=1)
 
     def sim_step(i, inp):
-        with bst.environ.context(i=i, t=i * bst.environ.get_dt(), fit=True):
+        with brainstate.environ.context(i=i, t=i * brainstate.environ.get_dt(), fit=True):
             out = model(inp)
         return out
 
     def loss_fun(i, inp, target):
-        with bst.environ.context(i=i, t=i * bst.environ.get_dt(), fit=True):
+        with brainstate.environ.context(i=i, t=i * brainstate.environ.get_dt(), fit=True):
             out = model(inp)
-        return bt.metric.softmax_cross_entropy_with_integer_labels(out, target).mean()
+        return braintools.metric.softmax_cross_entropy_with_integer_labels(out, target).mean()
 
-    @bst.transform.jit(static_argnums=(0, 1, 2))
+    @brainstate.compile.jit(static_argnums=(0, 1, 2))
     def compute_etrace_grad(method: str, n_rank, n_sim, inputs, targets):
-        bst.init_states(model, 1)
+        brainstate.nn.init_all_states(model, 1)
 
         if method == 'diag_expsm':
-            etrace = bsc.DiagIODimAlgorithm(partial(loss_fun, target=targets),
-                                            decay_or_rank=n_rank,
-                                            diag_normalize=None,
-                                            diag_jacobian=diag_jacobian)
+            etrace = brainscale.DiagIODimAlgorithm(partial(loss_fun, target=targets),
+                                                   decay_or_rank=n_rank,
+                                                   diag_normalize=None,
+                                                   diag_jacobian=diag_jacobian)
         elif method == 'diag':
-            etrace = bsc.DiagParamDimAlgorithm(partial(loss_fun, target=targets),
-                                               diag_normalize=None,
-                                               diag_jacobian=diag_jacobian)
+            etrace = brainscale.DiagParamDimAlgorithm(partial(loss_fun, target=targets),
+                                                      diag_normalize=None,
+                                                      diag_jacobian=diag_jacobian)
         else:
             raise ValueError(f'Unknown method {method}')
-        etrace.compile_graph(0, jax.ShapeDtypeStruct((1, model.n_in), bst.environ.dftype()))
-        f_grad = bst.transform.grad(etrace, grad_vars=weights)
+        etrace.compile_graph(0, jax.ShapeDtypeStruct((1, model.n_in), brainstate.environ.dftype()))
+        f_grad = brainstate.augment.grad(etrace, grad_vars=weights)
 
         def train_step(prev_grad, inp):
             i, inp = inp
@@ -349,25 +352,25 @@ def _compare(
         grads = jax.tree.map(jnp.zeros_like, weights.to_dict_values())
         indices = np.arange(inputs.shape[0])
         if n_sim > 0:
-            _ = bst.transform.for_loop(sim_step, indices[:n_sim], inputs[:n_sim])
-            grads, _ = bst.transform.scan(train_step, grads, (indices[n_sim:], inputs[n_sim:]))
+            _ = brainstate.compile.for_loop(sim_step, indices[:n_sim], inputs[:n_sim])
+            grads, _ = brainstate.compile.scan(train_step, grads, (indices[n_sim:], inputs[n_sim:]))
         else:
-            grads, _ = bst.transform.scan(train_step, grads, (indices, inputs))
+            grads, _ = brainstate.compile.scan(train_step, grads, (indices, inputs))
         return grads
 
-    @bst.transform.jit(static_argnums=(0,))
+    @brainstate.compile.jit(static_argnums=(0,))
     def compute_bptt_grad(n_sim, inputs, targets):
         def global_loss():
             indices = np.arange(inputs.shape[0])
             if n_sim > 0:
-                _ = bst.transform.for_loop(sim_step, indices[:n_sim], inputs[:n_sim])
-                losses = bst.transform.for_loop(partial(loss_fun, target=targets), indices[n_sim:], inputs[n_sim:])
+                _ = brainstate.compile.for_loop(sim_step, indices[:n_sim], inputs[:n_sim])
+                losses = brainstate.compile.for_loop(partial(loss_fun, target=targets), indices[n_sim:], inputs[n_sim:])
             else:
-                losses = bst.transform.for_loop(partial(loss_fun, target=targets), indices, inputs)
+                losses = brainstate.compile.for_loop(partial(loss_fun, target=targets), indices, inputs)
             return losses.sum()
 
-        bst.init_states(model, 1)
-        return bst.transform.grad(global_loss, grad_vars=weights)()
+        brainstate.nn.init_all_states(model, 1)
+        return brainstate.augment.grad(global_loss, grad_vars=weights)()
 
     def flatten(tree):
         leaves = jax.tree.leaves(tree)
@@ -425,7 +428,8 @@ def _compare(
 def compare_gradient_by_neuromorphic_data(fn='analysis/jac_cosine_sim', frac_sim=0.99, diag_jacobian: str = 'vjp'):
     if not os.path.exists(fn):
         os.makedirs(fn)
-    bst.environ.set(mode=bst.mixin.JointMode(bst.mixin.Batching(), bst.mixin.Training()), dt=1.0)
+    brainstate.environ.set(mode=brainstate.mixin.JointMode(brainstate.mixin.Batching(), brainstate.mixin.Training()),
+                           dt=1.0)
     # brainstate.random.seed(1)
 
     n_rec = 200
@@ -435,17 +439,17 @@ def compare_gradient_by_neuromorphic_data(fn='analysis/jac_cosine_sim', frac_sim
     for data_name, _, model_cls, args in model_setting_1:
         datalengths = [200, 400, 600, 1000] if data_name == 'gesture' else [None]
         for datalength in datalengths:
-            data_args = bst.util.DotDict(batch_size=1,
-                                         n_data_worker=1,
-                                         drop_last=False,
-                                         dataset=data_name,
-                                         data_length=datalength,
-                                         shuffle=False)
+            data_args = brainstate.util.DotDict(batch_size=1,
+                                                n_data_worker=1,
+                                                drop_last=False,
+                                                dataset=data_name,
+                                                data_length=datalength,
+                                                shuffle=False)
             dataset = get_snn_data(data_args)
 
             print(f'Processing {data_name} {datalength} with {model_cls.__name__}')
 
-            args__ = bst.util.DotDict(n_layer=n_layer, tau_o=10, )
+            args__ = brainstate.util.DotDict(n_layer=n_layer, tau_o=10, )
             for k, v in args.items():
                 args__[k] = v
             model = ETraceDenseNetV2(
@@ -483,7 +487,8 @@ def compare_gradient_multi_layer_by_neuromorphic_data(
 ):
     if not os.path.exists(fn):
         os.makedirs(fn)
-    bst.environ.set(mode=bst.mixin.JointMode(bst.mixin.Batching(), bst.mixin.Training()), dt=1.0)
+    brainstate.environ.set(mode=brainstate.mixin.JointMode(brainstate.mixin.Batching(), brainstate.mixin.Training()),
+                           dt=1.0)
     # brainstate.random.seed(1)
 
     n_rec = 200
@@ -511,7 +516,7 @@ def compare_gradient_multi_layer_by_neuromorphic_data(
         #   continue
         datalengths = [200, ] if data_name == 'gesture' else [None]
         for datalength in datalengths:
-            data_args = bst.util.DotDict(
+            data_args = brainstate.util.DotDict(
                 batch_size=1,
                 n_data_worker=1,
                 drop_last=False,
@@ -523,7 +528,7 @@ def compare_gradient_multi_layer_by_neuromorphic_data(
 
             print(f'Processing {data_name} {datalength} with {model_cls.__name__} {n_layer} layers')
 
-            args__ = bst.util.DotDict(n_layer=n_layer, tau_o=10, )
+            args__ = brainstate.util.DotDict(n_layer=n_layer, tau_o=10, )
             for k, v in args.items():
                 args__[k] = v
             # if data_name == 'N-MNIST':
@@ -554,7 +559,7 @@ def compare_gradient_multi_layer_by_neuromorphic_data(
             print(f'{data_name} {datalength} {model_cls.__name__}')
             print(r)
             results[(data_name, model_cls.__name__, datalength)] = r
-            bst.util.clear_buffer_memory(compilation=True, array=True)
+            brainstate.util.clear_buffer_memory(compilation=True, array=True)
 
     now = time.strftime('%Y-%m-%d %H-%M-%S', time.localtime(int(round(time.time() * 1000)) / 1000))
     filename = f'data/gradient-cosine-n_layer={n_layer}-n_rec={n_rec}-frac_sim={frac_sim}-{now}.pkl'
@@ -563,20 +568,21 @@ def compare_gradient_multi_layer_by_neuromorphic_data(
 
 
 def compare_gradient_on_random_data():
-    bst.environ.set(mode=bst.mixin.JointMode(bst.mixin.Batching(), bst.mixin.Training()), dt=1.0)
+    brainstate.environ.set(mode=brainstate.mixin.JointMode(brainstate.mixin.Batching(), brainstate.mixin.Training()),
+                           dt=1.0)
     n_in = 100
     n_rec = 200
     n_out = 2
     n_layer = 1
     n_seq = 1000
 
-    args = bst.util.DotDict(rec_wscale=0.1, ff_wscale=0.1, tau_mem=10.)
+    args = brainstate.util.DotDict(rec_wscale=0.1, ff_wscale=0.1, tau_mem=10.)
     model_cls = LIF_Delta_Dense_Layer
 
-    args = bst.util.DotDict(rec_wscale=40., ff_wscale=100., tau_mem=10., kwargs=dict(tau_syn=10.0, tau_a=100.0))
+    args = brainstate.util.DotDict(rec_wscale=40., ff_wscale=100., tau_mem=10., kwargs=dict(tau_syn=10.0, tau_a=100.0))
     model_cls = ALIF_ExpCu_Dense_Layer
 
-    args__ = bst.util.DotDict(n_layer=n_layer, tau_o=10)
+    args__ = brainstate.util.DotDict(n_layer=n_layer, tau_o=10)
     for k, v in args.items():
         args__[k] = v
     model = ETraceDenseNetV2(n_in=n_in,
@@ -604,10 +610,11 @@ def compare_gradient_on_random_data():
 
 
 def compare_gradient_approx_when_recurrent_size_increases(fn='analysis/jac_cosine_sim', frac_sim=0.99):
-    bst.environ.set(mode=bst.mixin.JointMode(bst.mixin.Batching(), bst.mixin.Training()), dt=1.0)
-    bst.random.seed(1)
-    bst.environ.set(dt=1.0)
-    spk_fun = bst.surrogate.ReluGrad(width=1.)
+    brainstate.environ.set(mode=brainstate.mixin.JointMode(brainstate.mixin.Batching(), brainstate.mixin.Training()),
+                           dt=1.0)
+    brainstate.random.seed(1)
+    brainstate.environ.set(dt=1.0)
+    spk_fun = brainstate.surrogate.ReluGrad(width=1.)
 
     rec_sizes = [10, 50, 100, 300, 500, 1000, 2000, 4000, 8000, 10000, 20000, 40000]
     rec_sizes = [10, 50, 100, 300, 500, 1000, 2000, 4000]
@@ -621,7 +628,7 @@ def compare_gradient_approx_when_recurrent_size_increases(fn='analysis/jac_cosin
             datalengths = [200, ] if data_name == 'gesture' else [None]
             for datalength in datalengths:
                 # data
-                data_args = bst.util.DotDict(
+                data_args = brainstate.util.DotDict(
                     batch_size=1,
                     n_data_worker=1,
                     drop_last=False,
@@ -632,7 +639,7 @@ def compare_gradient_approx_when_recurrent_size_increases(fn='analysis/jac_cosin
                 dataset = get_snn_data(data_args)
 
                 # model
-                args__ = bst.util.DotDict(n_layer=n_layer, tau_o=10)
+                args__ = brainstate.util.DotDict(n_layer=n_layer, tau_o=10)
                 for k, v in model_args.items():
                     args__[k] = v
                 model = ETraceDenseNetV2(
@@ -662,7 +669,7 @@ def compare_gradient_approx_when_recurrent_size_increases(fn='analysis/jac_cosin
                     key = (data_name, datalength, n_rec, model_cls.__name__)
                     final_results[key] = r
                     print(r)
-                    bst.util.clear_buffer_memory()
+                    brainstate.util.clear_buffer_memory()
                 except Exception as e:
                     print(e)
                 print()
@@ -673,10 +680,11 @@ def compare_gradient_approx_when_recurrent_size_increases(fn='analysis/jac_cosin
 
 
 def compare_gradient_approx_when_ff_conn_increases(fn='analysis/jac_cosine_sim', frac_sim=0.99):
-    bst.environ.set(mode=bst.mixin.JointMode(bst.mixin.Batching(), bst.mixin.Training()), dt=1.0)
-    bst.random.seed(1)
-    bst.environ.set(dt=1.0)
-    spk_fun = bst.surrogate.ReluGrad(width=1.)
+    brainstate.environ.set(mode=brainstate.mixin.JointMode(brainstate.mixin.Batching(), brainstate.mixin.Training()),
+                           dt=1.0)
+    brainstate.random.seed(1)
+    brainstate.environ.set(dt=1.0)
+    spk_fun = brainstate.surrogate.ReluGrad(width=1.)
     n_rec = 200
     n_layer = 1
 
@@ -687,7 +695,7 @@ def compare_gradient_approx_when_ff_conn_increases(fn='analysis/jac_cosine_sim',
             # datalengths = [200,] if data_name == 'gesture' else [None]
             for datalength in datalengths:
                 # data
-                data_args = bst.util.DotDict(
+                data_args = brainstate.util.DotDict(
                     batch_size=1,
                     n_data_worker=1,
                     drop_last=False,
@@ -698,7 +706,7 @@ def compare_gradient_approx_when_ff_conn_increases(fn='analysis/jac_cosine_sim',
                 dataset = get_snn_data(data_args)
 
                 # model
-                args__ = bst.util.DotDict(n_layer=n_layer, tau_o=10)
+                args__ = brainstate.util.DotDict(n_layer=n_layer, tau_o=10)
                 for k, v in model_args.items():
                     args__[k] = v
                 args__['ff_wscale'] = args__['ff_wscale'] * ff_frac
@@ -729,7 +737,7 @@ def compare_gradient_approx_when_ff_conn_increases(fn='analysis/jac_cosine_sim',
                     key = (data_name, datalength, ff_frac, model_cls.__name__)
                     final_results[key] = r
                     print(r)
-                    bst.util.clear_buffer_memory()
+                    brainstate.util.clear_buffer_memory()
                 except Exception as e:
                     print(e)
                 print()
@@ -740,10 +748,11 @@ def compare_gradient_approx_when_ff_conn_increases(fn='analysis/jac_cosine_sim',
 
 
 def compare_gradient_approx_when_rec_conn_increases(fn='analysis/jac_cosine_sim', frac_sim=0.99):
-    bst.environ.set(mode=bst.mixin.JointMode(bst.mixin.Batching(), bst.mixin.Training()), dt=1.0)
-    bst.random.seed(1)
-    bst.environ.set(dt=1.0)
-    spk_fun = bst.surrogate.ReluGrad(width=1.)
+    brainstate.environ.set(mode=brainstate.mixin.JointMode(brainstate.mixin.Batching(), brainstate.mixin.Training()),
+                           dt=1.0)
+    brainstate.random.seed(1)
+    brainstate.environ.set(dt=1.0)
+    spk_fun = brainstate.surrogate.ReluGrad(width=1.)
     n_rec = 200
     n_layer = 1
 
@@ -754,7 +763,7 @@ def compare_gradient_approx_when_rec_conn_increases(fn='analysis/jac_cosine_sim'
             # datalengths = [200,] if data_name == 'gesture' else [None]
             for datalength in datalengths:
                 # data
-                data_args = bst.util.DotDict(
+                data_args = brainstate.util.DotDict(
                     batch_size=1,
                     n_data_worker=1,
                     drop_last=False,
@@ -765,7 +774,7 @@ def compare_gradient_approx_when_rec_conn_increases(fn='analysis/jac_cosine_sim'
                 dataset = get_snn_data(data_args)
 
                 # model
-                args__ = bst.util.DotDict(n_layer=n_layer, tau_o=10)
+                args__ = brainstate.util.DotDict(n_layer=n_layer, tau_o=10)
                 for k, v in model_args.items():
                     args__[k] = v
                 args__['rec_wscale'] = args__['rec_wscale'] * rec_frac
@@ -796,7 +805,7 @@ def compare_gradient_approx_when_rec_conn_increases(fn='analysis/jac_cosine_sim'
                     key = (data_name, datalength, rec_frac, model_cls.__name__)
                     final_results[key] = r
                     print(r)
-                    bst.util.clear_buffer_memory()
+                    brainstate.util.clear_buffer_memory()
                 except Exception as e:
                     print(e)
                 print()

@@ -21,6 +21,8 @@ import logging
 import os
 import shutil
 import sys
+import numpy as np
+import matplotlib.pyplot as plt
 
 import brainstate
 import braintools
@@ -216,3 +218,80 @@ class ProgressMeter(object):
         num_digits = len(str(num_batches // 1))
         fmt = '{:' + str(num_digits) + 'd}'
         return '[' + fmt + '/' + fmt.format(num_batches) + ']'
+
+
+def raster_plot(
+    ts,
+    sp_matrix,
+    ax=None,
+    marker='.',
+    markersize=2,
+    color='k',
+    xlabel='Time (ms)',
+    ylabel='Neuron index',
+    xlim=None,
+    ylim=None,
+    title=None,
+    show=False,
+    **kwargs
+):
+    """Show the rater plot of the spikes.
+
+    Parameters
+    ----------
+    ts : np.ndarray
+        The run times.
+    sp_matrix : np.ndarray
+        The spike matrix which records the spike information.
+        It can be easily accessed by specifying the ``monitors``
+        of NeuGroup by: ``neu = NeuGroup(..., monitors=['spike'])``
+    ax : Axes
+        The figure.
+    markersize : int
+        The size of the marker.
+    color : str
+        The color of the marker.
+    xlim : list, tuple
+        The xlim.
+    ylim : list, tuple
+        The ylim.
+    xlabel : str
+        The xlabel.
+    ylabel : str
+        The ylabel.
+    show : bool
+        Show the figure.
+    """
+
+    sp_matrix = np.asarray(sp_matrix)
+    ts = np.asarray(ts)
+
+    # get index and time
+    elements = np.where(sp_matrix > 0.)
+    index = elements[1]
+    time = ts[elements[0]]
+
+    # plot rater
+    if ax is None:
+        ax = plt
+    ax.plot(time, index, marker + color, markersize=markersize, **kwargs)
+
+    # xlable
+    if xlabel:
+        plt.xlabel(xlabel)
+
+    # ylabel
+    if ylabel:
+        plt.ylabel(ylabel)
+
+    if xlim:
+        plt.xlim(xlim[0], xlim[1])
+
+    if ylim:
+        plt.ylim(ylim[0], ylim[1])
+
+    if title:
+        plt.title(title)
+
+    if show:
+        plt.show()

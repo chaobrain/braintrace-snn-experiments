@@ -11,13 +11,18 @@
 This is where the dataloader is defined for the SHD and SSC datasets.
 """
 
-import logging
+import os
 
+import brainstate
 import h5py
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
+
+__all__ = [
+    'load_dataset',
+]
 
 
 class SpikingDataset(Dataset):
@@ -74,7 +79,7 @@ class SpikingDataset(Dataset):
 
         return x.to_dense(), y
 
-    def generateBatch(self, batch):
+    def generate_batch(self, batch):
         xs, ys = zip(*batch)
         xs = torch.nn.utils.rnn.pad_sequence(xs, batch_first=True)
         xlens = torch.tensor([x.shape[0] for x in xs])
@@ -83,54 +88,157 @@ class SpikingDataset(Dataset):
         return xs, xlens, ys
 
 
-def load_shd_or_ssc(
-    dataset_name: str,
-    data_folder: str,
-    split: str,
-    batch_size: int,
-    nb_steps: int = 100,
-    shuffle: bool = True,
-    workers: int = 0,
-):
-    """
-    This function creates a dataloader for a given split of
-    the SHD or SSC datasets.
+def load_shd_data(args):
+    train_dataset = SpikingDataset('shd', args.data_folder, 'train', args.data_length)
+    test_dataset = SpikingDataset('shd', args.data_folder, 'test', args.data_length)
 
-    Arguments
-    ---------
-    dataset_name : str
-        Name of the dataset, either shd or ssc.
-    data_folder : str
-        Path to folder containing the Heidelberg Digits dataset.
-    split : str
-        Split of dataset, must be either "train" or "test" for SHD.
-        For SSC, can be "train", "valid" or "test".
-    batch_size : int
-        Number of examples in a single generated batch.
-    shuffle : bool
-        Whether to shuffle examples or not.
-    workers : int
-        Number of workers.
-    """
-    if dataset_name not in ["shd", "ssc"]:
-        raise ValueError(f"Invalid dataset name {dataset_name}")
-
-    if split not in ["train", "valid", "test"]:
-        raise ValueError(f"Invalid split name {split}")
-
-    if dataset_name == "shd" and split == "valid":
-        logging.info("SHD does not have a validation split. Using test split.")
-        split = "test"
-
-    dataset = SpikingDataset(dataset_name, data_folder, split, nb_steps)
-    logging.info(f"Number of examples in {split} set: {len(dataset)}")
-
-    loader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        collate_fn=dataset.generateBatch,
-        shuffle=shuffle,
-        num_workers=workers,
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        collate_fn=train_dataset.generate_batch,
+        shuffle=True,
+        num_workers=args.num_workers,
         pin_memory=True,
     )
-    return loader
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=args.batch_size,
+        collate_fn=train_dataset.generate_batch,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+    )
+    return brainstate.util.DotDict(
+        {
+            'train_loader': train_loader,
+            'test_loader': test_loader,
+            'in_shape': (700,),
+            'out_shape': (20,),
+        }
+    )
+
+
+def load_ssc_data(args):
+    train_dataset = SpikingDataset('ssc', args.data_folder, 'train', args.data_length)
+    test_dataset = SpikingDataset('ssc', args.data_folder, 'test', args.data_length)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        collate_fn=train_dataset.generate_batch,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=True,
+    )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=args.batch_size,
+        collate_fn=test_dataset.generate_batch,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+    )
+    return brainstate.util.DotDict(
+        {
+            'train_loader': train_loader,
+            'test_loader': test_loader,
+            'in_shape': (700,),
+            'out_shape': (35,),
+        }
+    )
+
+
+# We need to stack the batch elements
+def numpy_collate(batch):
+    if isinstance(batch[0], np.ndarray):
+        return np.stack(batch)
+    elif isinstance(batch[0], (tuple, list)):
+        transposed = zip(*batch)
+        return [numpy_collate(samples) for samples in transposed]
+    else:
+        return np.array(batch)
+
+
+class FormattedDVSGesture:
+    def __init__(self, filepath: str):
+        self.filepath = filepath
+        data = np.load(filepath, allow_pickle=True)
+        self.xs_row = data['xs_row']
+        self.xs_col = data['xs_col']
+        self.xs_data = data['xs_data']
+        self.ys = data['ys']
+        self.img_size = data['img_size']
+
+    def __getitem__(self, idx):
+        arr = np.zeros(tuple(self.img_size), dtype=brainstate.environ.dftype())
+        row = self.xs_row[idx]
+        col = self.xs_col[idx]
+        data = self.xs_data[idx]
+        arr[row, col] = data
+        y = self.ys[idx]
+        return arr, y
+
+    def __len__(self):
+        return len(self.ys)
+
+
+def load_gesture_data(args):
+    # The Dynamic Vision Sensor (DVS) Gesture (DVSGesture) dataset consists of 11 classes of hand gestures recorded
+    # by a DVS sensor. The DVSGesture dataset is a spiking version of the MNIST dataset. The dataset consists of
+    # 60k training and 10k test samples.
+
+    in_shape = np.prod((128, 128, 2))
+    out_shape = 11
+    n_step = args.data_length
+    cache_dir = args.data_folder
+    train_path = os.path.join(cache_dir, f"DVSGesture/DVSGesture-mlp-train-step={n_step}.npz")
+    train_path = os.path.abspath(train_path)
+    test_path = os.path.join(cache_dir, f"DVSGesture/DVSGesture-mlp-test-step={n_step}.npz")
+    test_path = os.path.abspath(test_path)
+    if not os.path.exists(train_path) or not os.path.exists(test_path):
+        raise ValueError(
+            f'Cache files {train_path} and {test_path} do not exist. '
+            f'please run "dvs-gesture-preprocessing.py" first.'
+        )
+    else:
+        print(f'Used cache files {train_path} and {test_path}.')
+    train_set = FormattedDVSGesture(train_path)
+    test_set = FormattedDVSGesture(test_path)
+
+    if args.use_augm:
+        pass
+
+    train_loader = DataLoader(
+        train_set,
+        shuffle=True,
+        batch_size=args.batch_size,
+        collate_fn=numpy_collate,
+        num_workers=args.num_workers,
+        drop_last=args.drop_last == 1,
+    )
+    test_loader = DataLoader(
+        test_set,
+        shuffle=False,
+        batch_size=args.batch_size,
+        collate_fn=numpy_collate,
+        num_workers=args.num_workers
+    )
+
+    return brainstate.util.DotDict(
+        {
+            'train_loader': train_loader,
+            'test_loader': test_loader,
+            'in_shape': in_shape,
+            'out_shape': out_shape,
+        }
+    )
+
+
+def load_dataset(args):
+    if args.dataset_name == 'shd':
+        return load_shd_data(args)
+    elif args.dataset_name == 'ssc':
+        return load_ssc_data(args)
+    elif args.dataset_name == 'gesture':
+        return load_gesture_data(args)
+    else:
+        raise ValueError(f'Unknown dataset name: {args.dataset_name}')

@@ -11,6 +11,7 @@
 This is to define the experiment class used to perform training and testing
 of ANNs and SNNs on all speech command recognition datasets.
 """
+
 import datetime
 import errno
 import os
@@ -275,7 +276,7 @@ class Experiment(brainstate.util.PrettyObject):
             outname += "_drop" + str(self.pdrop) + "_" + str(self.normalization)
             outname += "_bias" if self.use_bias else "_nobias"
             outname += "_lr" + str(self.lr)
-            exp_folder = f"exp/{outname.replace('.', '_')}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            exp_folder = f"exp-all/{outname.replace('.', '_')}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
         # For a new model check that out path does not exist
         if os.path.exists(exp_folder):
@@ -328,41 +329,6 @@ class Experiment(brainstate.util.PrettyObject):
                 )
             if self.use_augm:
                 self.logger.warning("\nWarning: Data augmentation not implemented for SHD and SSC.\n")
-
-        # For the non-spiking datasets
-        elif self.dataset_name in ["hd", "sc"]:
-            from nonspiking_datasets import load_hd_or_sc
-
-            self.nb_inputs = 40
-            self.nb_outputs = 20 if self.dataset_name == "hd" else 35
-
-            self.train_loader = load_hd_or_sc(
-                dataset_name=self.dataset_name,
-                data_folder=self.data_folder,
-                split="train",
-                batch_size=self.batch_size,
-                use_augm=self.use_augm,
-                shuffle=True,
-            )
-            self.valid_loader = load_hd_or_sc(
-                dataset_name=self.dataset_name,
-                data_folder=self.data_folder,
-                split="valid",
-                batch_size=self.batch_size,
-                use_augm=self.use_augm,
-                shuffle=False,
-            )
-            if self.dataset_name == "sc":
-                self.test_loader = load_hd_or_sc(
-                    dataset_name=self.dataset_name,
-                    data_folder=self.data_folder,
-                    split="test",
-                    batch_size=self.batch_size,
-                    use_augm=self.use_augm,
-                    shuffle=False,
-                )
-            if self.use_augm:
-                self.logger.warning("\nData augmentation is used\n")
 
         else:
             raise ValueError(f"Invalid dataset name {self.dataset_name}")

@@ -17,6 +17,7 @@ import os
 
 import numpy as np
 import tonic
+from scipy.sparse import coo_matrix
 from tonic.collation import PadTensors
 from tonic.datasets import DVSGesture
 from torch.utils.data import DataLoader
@@ -55,26 +56,29 @@ def _dvs_gesture_preprocessing(num_workers: int, n_step: int = 100, cache_dir=os
         num_workers=num_workers
     )
 
-    def _to_index(xs):
-        xs = np.asarray(xs)
-        res = []
-        for x in xs:
-            indices = np.where(np.reshape(x, (x.shape[0], -1)))  # a tuple of two indices
-            res.append(np.asarray(indices, dtype=np.int32).T)
-        return res
-
     for loader, filename in [(train_loader, train_filename),
                              (test_loader, test_filename)]:
-        xs, ys = [], []
-        img_size = None
-        for i, (x, y) in tqdm(enumerate(loader), total=len(loader), desc='preprocessing'):
-            xs.extend(_to_index(x))
-            ys.append(np.asarray(y))
-            if img_size is None:
-                img_size = (x.shape[1], np.prod(x.shape[2:]))
-        xs = np.asarray(xs, dtype=object)
+        xs_row, xs_col, xs_data, ys = [], [], [], []
+        for i, (xs, ys) in tqdm(enumerate(loader), total=len(loader), desc='preprocessing'):
+            for x in xs:
+                x = np.asarray(x)
+                csr = coo_matrix(np.reshape(x, (x.shape[0], -1)))
+                xs_row.append(csr.row)
+                xs_col.append(csr.col)
+                xs_data.append(csr.data)
+            ys.append(np.asarray(ys))
+        img_size = (x.shape[1], np.prod(x.shape[2:]))
+        xs_row = np.asarray(xs_row, dtype=object)
+        xs_col = np.asarray(xs_col, dtype=object)
+        xs_data = np.asarray(xs_data, dtype=object)
         ys = np.concatenate(ys)
-        np.savez(filename, xs=xs, ys=ys, img_size=np.asarray(img_size, dtype=np.int32))
+        np.savez(
+            filename,
+            xs_row=xs_row,
+            xs_col=xs_col,
+            xs_data=xs_data, ys=ys,
+            img_size=np.asarray(img_size, dtype=np.int32)
+        )
 
 
 if __name__ == '__main__':

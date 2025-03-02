@@ -32,27 +32,30 @@ def strtobool(val):
 if platform.platform() == 'Windows-10-10.0.26100-SP0':
     shd_path = 'D:/data/shd/'
     ssc_path = 'D:/data/ssc/'
-
+    num_worker = 0
 # 雷神WSL
 elif platform.platform() == 'Linux-5.15.167.4-microsoft-standard-WSL2-x86_64-with-glibc2.35':
     shd_path = '/mnt/d/data/shd/'
     ssc_path = '/mnt/d/data/ssc/'
+    num_worker = 10
 
 # 吴思Lab A100
 elif platform.platform() == 'Linux-6.8.0-52-generic-x86_64-with-glibc2.35':
     shd_path = '/home/chaomingwang/data/shd/'
     ssc_path = '/home/chaomingwang/data/ssc/'
+    num_worker = 10
 
 # 横琴A100
 elif platform.platform() == 'Linux-5.15.0-84-generic-x86_64-with-glibc2.31':
     shd_path = '/home/chaoming/data/shd/'
     ssc_path = '/home/chaoming/data/ssc/'
+    num_worker = 10
 
 # 吴思Lab brainpy-tower1-brainpy
 elif platform.platform() == 'Linux-6.8.0-48-generic-x86_64-with-glibc2.35':
     shd_path = '/home/brainpy/data/shd/'
     ssc_path = '/home/brainpy/data/ssc/'
-
+    num_worker = 10
 
 else:
     shd_path = None
@@ -84,11 +87,17 @@ def add_training_options(parser):
 
     if args.dataset_name == "shd":
         path = shd_path
+        data_length = 100
     elif args.dataset_name == "ssc":
         path = ssc_path
+        data_length = 100
+    elif args.dataset_name == 'gesture':
+        path = '../data'
+        data_length = 200
     else:
-        path = 'data/shd_dataset/'
+        raise ValueError
 
+    parser.add_argument('--data_length', type=int, default=data_length)
     parser.add_argument("--data_folder", type=str, default=path, help="Path to dataset folder.", )
     parser.add_argument(
         "--save_best",
@@ -107,6 +116,12 @@ def add_training_options(parser):
         "--nb_epochs",
         type=int,
         default=5,
+        help="Number of training epochs (i.e. passes through the dataset).",
+    )
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=num_worker,
         help="Number of training epochs (i.e. passes through the dataset).",
     )
     parser.add_argument(
@@ -142,7 +157,7 @@ def add_training_options(parser):
         type=lambda x: bool(strtobool(str(x))),
         default=False,
         help="Whether to use data augmentation or not. Only implemented for "
-             "nonspiking HD and SC datasets.",
+             "non-spiking HD and SC datasets.",
     )
     return parser
 

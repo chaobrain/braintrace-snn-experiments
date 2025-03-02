@@ -86,7 +86,6 @@ class SNN(brainstate.nn.Module):
         self.normalization = normalization
         self.use_bias = use_bias
         self.use_readout_layer = use_readout_layer
-        self.is_snn = True
 
         if neuron_type not in ["LIF", "adLIF", "RLIF", "RadLIF"]:
             raise ValueError(f"Invalid neuron type {neuron_type}")
@@ -336,9 +335,9 @@ class adLIFLayer(brainstate.nn.Module):
         return s
 
     def init_state(self, *args, **kwargs):
-        self.ut = brainscale.ETraceState(brainstate.random.rand(self.hidden_size))
-        self.wt = brainscale.ETraceState(brainstate.random.rand(self.hidden_size))
-        self.st = brainscale.ETraceState(brainstate.random.rand(self.hidden_size))
+        self.ut = brainscale.ETraceState(jnp.zeros(self.hidden_size))
+        self.wt = brainscale.ETraceState(jnp.zeros(self.hidden_size))
+        self.st = brainscale.ETraceState(jnp.zeros(self.hidden_size))
 
     def _adlif_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges
@@ -452,8 +451,8 @@ class RLIFLayer(brainstate.nn.Module):
         return s
 
     def init_state(self, *args, **kwargs):
-        self.ut = brainscale.ETraceState(brainstate.random.rand(self.hidden_size))
-        self.st = brainscale.ETraceState(brainstate.random.rand(self.hidden_size))
+        self.ut = brainscale.ETraceState(jnp.zeros(self.hidden_size))
+        self.st = brainscale.ETraceState(jnp.zeros(self.hidden_size))
 
     def _rlif_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges
@@ -574,9 +573,9 @@ class RadLIFLayer(brainstate.nn.Module):
         return s
 
     def init_state(self, *args, **kwargs):
-        self.ut = brainscale.ETraceState(brainstate.random.rand(self.hidden_size))
-        self.wt = brainscale.ETraceState(brainstate.random.rand(self.hidden_size))
-        self.st = brainscale.ETraceState(brainstate.random.rand(self.hidden_size))
+        self.ut = brainscale.ETraceState(jnp.zeros(self.hidden_size))
+        self.wt = brainscale.ETraceState(jnp.zeros(self.hidden_size))
+        self.st = brainscale.ETraceState(jnp.zeros(self.hidden_size))
 
     def _radlif_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges
@@ -674,7 +673,7 @@ class ReadoutLayer(brainstate.nn.Module):
         return out
 
     def init_state(self, *args, **kwargs):
-        self.ut = brainscale.ETraceState(brainstate.random.rand(self.hidden_size))
+        self.ut = brainscale.ETraceState(jnp.zeros(self.hidden_size))
         # self.out = brainscale.ETraceState(jnp.zeros(self.hidden_size))
 
     def _readout_cell(self, Wx):
