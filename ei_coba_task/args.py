@@ -35,7 +35,8 @@ def parse_args():
     parser.add_argument("--warmup", type=float, default=0., help="The ratio for network simulation.")
 
     # Model
-    parser.add_argument("--neuron", type=str, default='gifv2', help="str: neuron type")
+    parser.add_argument("--epoch_per_step", type=int, default=5, help="epoch_per_step")
+    parser.add_argument("--neuron", type=str, default='gifv1', help="str: neuron type")
     parser.add_argument("--diff_spike", type=int, default=0, help="0: False, 1: True")
     parser.add_argument("--dt", type=float, default=1., help="")
     parser.add_argument("--net", type=str, default='coba', choices=['coba', 'cuba'], help="")

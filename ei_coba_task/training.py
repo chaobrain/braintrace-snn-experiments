@@ -15,6 +15,7 @@
 
 import os
 import os.path
+import platform
 import sys
 import time
 from typing import Tuple
@@ -30,8 +31,11 @@ sys.path.append('D:/codes/projects/brainstate')
 sys.path.append('D:/codes/projects/brainevent')
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
 from args import parse_args
-import matplotlib
-matplotlib.use('agg')
+
+if not platform.platform().startswith('Windows'):
+    import matplotlib
+
+    matplotlib.use('agg')
 
 import brainstate
 import braintools
@@ -48,9 +52,9 @@ class Trainer:
     def __init__(
         self,
         target_net: _SNNEINet,
-        optimizer: brainstate.optim.Optimizer,
         loader: EvidenceAccumulation,
         args: brainstate.util.DotDict,
+        lr: float,
         filepath: str | None = None
     ):
         # the network
@@ -65,7 +69,8 @@ class Trainer:
 
         # optimizer
         self.trainable_weights = self.target.states().subset(brainstate.ParamState)
-        self.optimizer = optimizer
+        lr = brainstate.optim.StepLR(lr, step_size=args.epoch_per_step, gamma=0.9)
+        self.optimizer = brainstate.optim.Adam(lr=lr)
         self.optimizer.register_trainable_weights(self.trainable_weights)
 
     def print(self, msg, file=None):
@@ -188,7 +193,8 @@ class Trainer:
             acc = self._acc(outs[n_sim:], targets)
             return mse_losses + l1_losses, (mse_losses, l1_losses, acc)
 
-        f_grad = brainstate.augment.grad(_bptt_grad, grad_states=self.trainable_weights, has_aux=True, return_value=True)
+        f_grad = brainstate.augment.grad(_bptt_grad, grad_states=self.trainable_weights, has_aux=True,
+                                         return_value=True)
         grads, loss, (mse_losses, l1_losses, acc) = f_grad()
         grads = brainstate.functional.clip_grad_norm(grads, 1.)
         self.optimizer.update(grads)
@@ -219,13 +225,13 @@ class Trainer:
                 if self.args.method == 'bptt' else
                 self.etrace_train(inputs, outputs)
             )
-            if (bar_idx + 1) % 100 == 0:
-                self.optimizer.lr.step_epoch()
+            self.optimizer.lr.step_epoch()
             desc = (
                 f'Batch {bar_idx:2d}, '
                 f'CE={float(mse_ls):.8f}, '
                 f'L1={float(l1_ls):.6f}, '
                 f'acc={float(acc):.6f}, '
+                f'lr={self.optimizer.lr():.6f}, '
                 f'time={time.time() - t0:.2f} s'
             )
             self.print(desc, file=file)
@@ -253,10 +259,10 @@ def training():
     exp_name = 'results/'
     if gargs.exp_name:
         exp_name += gargs.exp_name + '/'
-    if gargs.method == 'bptt':
-        filepath = f'{exp_name}/{gargs.method}/tau_a={gargs.tau_a}-tau_neu={gargs.tau_neu}-tau_syn={gargs.tau_syn}-{now}'
-    else:
-        filepath = f'{exp_name}/{gargs.method}/tau_a={gargs.tau_a}-tau_neu={gargs.tau_neu}-tau_syn={gargs.tau_syn}-{now}'
+    filepath = f'{exp_name}/{gargs.method}'
+    if gargs.method == 'esd-rtrl':
+        filepath = f'{filepath}-etrace={gargs.etrace_decay}'
+    filepath = f'{filepath}/tau_a={gargs.tau_a}-tau_neu={gargs.tau_neu}-tau_syn={gargs.tau_syn}-{now}'
 
     # data
     with brainstate.environ.context(dt=brainstate.environ.get_dt() * u.ms):
@@ -281,11 +287,8 @@ def training():
         diff_spike=gargs.diff_spike,
     )
 
-    # optimizer
-    opt = brainstate.optim.Adam(lr=gargs.lr)
-
     # trainer
-    trainer = Trainer(net, opt, loader, gargs, filepath=filepath)
+    trainer = Trainer(net, loader, gargs, lr=gargs.lr, filepath=filepath)
     if gargs.mode == 'sim':
         trainer.f_sim()
     else:
@@ -294,3 +297,4 @@ def training():
 
 if __name__ == '__main__':
     training()
+

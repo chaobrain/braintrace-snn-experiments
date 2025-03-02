@@ -18,10 +18,24 @@
 
 for i in {1..10}
 do
-#  python training.py --tau_neu 400 --tau_syn 5 --tau_a 1500  --ff_scale 1.0 --rec_scale 0.5 --method bptt  --n_rec 400
+  python training.py --tau_neu 400 --tau_syn 5 --tau_a 1500  --ff_scale 1.0 --rec_scale 0.5 --method bptt  --n_rec 400 --neuron gifv3
 
-  python training.py --tau_neu 400 --tau_syn 5 --tau_a 1500  --ff_scale 1.0 --rec_scale 0.5 --method d-rtrl  --n_rec 400
+  python training.py --tau_neu 400 --tau_syn 5 --tau_a 1500  --ff_scale 1.0 --rec_scale 0.5 --method d-rtrl  --n_rec 400 --neuron gifv3 --epoch_per_step 10
+  python training.py --tau_neu 400 --tau_syn 5 --tau_a 1500  --ff_scale 1.0 --rec_scale 0.5 --method d-rtrl  --n_rec 400 --neuron gifv3 --epoch_per_step 5 --mode sim
 
-  python training.py --tau_neu 400 --tau_syn 5 --tau_a 1500  --ff_scale 1.0 --rec_scale 0.5 --method esd-rtrl --etrace_decay 0.98  --n_rec 400
+  python training.py --tau_neu 400 --tau_syn 5 --tau_a 1500  --ff_scale 1.0 --rec_scale 0.5 --method esd-rtrl --etrace_decay 0.95  --n_rec 400 --neuron gifv3
+  python training.py --tau_neu 400 --tau_syn 5 --tau_a 1500  --ff_scale 1.0 --rec_scale 0.5 --method esd-rtrl --etrace_decay 0.98  --n_rec 400 --neuron gifv3
+  python training.py --tau_neu 400 --tau_syn 5 --tau_a 1500  --ff_scale 1.0 --rec_scale 0.5 --method esd-rtrl --etrace_decay 0.99  --n_rec 400 --neuron gifv3
 done
+
+
+#
+#for i in {1..10}
+#do
+#  python training.py --tau_neu 400 --tau_syn 5 --tau_a 1500  --ff_scale 1.0 --rec_scale 0.5 --method bptt  --n_rec 400 --diff_spike 1 --neuron gifv3
+#
+#  python training.py --tau_neu 400 --tau_syn 5 --tau_a 1500  --ff_scale 1.0 --rec_scale 0.5 --method d-rtrl  --n_rec 400
+#
+#  python training.py --tau_neu 400 --tau_syn 5 --tau_a 1500  --ff_scale 1.0 --rec_scale 0.5 --method esd-rtrl --etrace_decay 0.98  --n_rec 400
+#done
 
