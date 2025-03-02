@@ -285,6 +285,7 @@ def training():
         w_ei_ratio=gargs.w_ei_ratio,
         filepath=filepath,
         diff_spike=gargs.diff_spike,
+        neuron_type=gargs.neuron_type,
     )
 
     # trainer
