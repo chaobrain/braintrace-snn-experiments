@@ -79,7 +79,7 @@ def add_training_options(parser):
     parser.add_argument(
         "--dataset_name",
         type=str,
-        choices=["shd", "ssc", "hd", "sc"],
+        choices=["shd", "ssc", "gesture", "nmnist"],
         default="shd",
         help="Dataset name (shd, ssc, hd or sc).",
     )
@@ -92,6 +92,9 @@ def add_training_options(parser):
         path = ssc_path
         data_length = 100
     elif args.dataset_name == 'gesture':
+        path = '../data'
+        data_length = 200
+    elif args.dataset_name == 'nmnist':
         path = '../data'
         data_length = 200
     else:

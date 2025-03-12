@@ -85,7 +85,48 @@ class SpikingDataset(Dataset):
         xlens = torch.tensor([x.shape[0] for x in xs])
         ys = torch.LongTensor(ys).to(self.device)
 
-        return xs, xlens, ys
+        # return xs, xlens, ys
+        return xs, ys
+
+
+def load_nmnist_data(args, first_saccade_only=True):
+    from tonic.datasets import NMNIST
+    import tonic
+
+    in_shape = NMNIST.sensor_size
+    out_shape = 10
+
+    def flatten(x):
+        return np.asarray(x.reshape(x.shape[0], -1), dtype=np.float32)
+
+    transform = tonic.transforms.ToFrame(sensor_size=in_shape, n_time_bins=args.data_length)
+    transform = tonic.transforms.Compose([transform, flatten])
+    train_set = NMNIST(save_to=args.data_folder, train=True, transform=transform, first_saccade_only=first_saccade_only)
+    test_set = NMNIST(save_to=args.data_folder, train=False, transform=transform, first_saccade_only=first_saccade_only)
+    train_loader = DataLoader(
+        train_set,
+        shuffle=True,
+        batch_size=args.batch_size,
+        collate_fn=numpy_collate,
+        num_workers=args.num_workers,
+        drop_last=False,
+    )
+    test_loader = DataLoader(
+        test_set,
+        shuffle=False,
+        batch_size=args.batch_size,
+        collate_fn=numpy_collate,
+        num_workers=args.num_workers,
+    )
+
+    return brainstate.util.DotDict(
+        {
+            'train_loader': train_loader,
+            'test_loader': test_loader,
+            'in_shape': int(np.prod(in_shape)),
+            'out_shape': out_shape,
+        }
+    )
 
 
 def load_shd_data(args):
@@ -112,8 +153,9 @@ def load_shd_data(args):
         {
             'train_loader': train_loader,
             'test_loader': test_loader,
-            'in_shape': (700,),
-            'out_shape': (20,),
+            'in_shape': 700,
+            'out_shape': 20,
+            'input_process': lambda x: x,
         }
     )
 
@@ -141,8 +183,9 @@ def load_ssc_data(args):
         {
             'train_loader': train_loader,
             'test_loader': test_loader,
-            'in_shape': (700,),
-            'out_shape': (35,),
+            'in_shape': 700,
+            'out_shape': 35,
+            'input_process': lambda x: x,
         }
     )
 
@@ -186,7 +229,7 @@ def load_gesture_data(args):
     # by a DVS sensor. The DVSGesture dataset is a spiking version of the MNIST dataset. The dataset consists of
     # 60k training and 10k test samples.
 
-    in_shape = np.prod((128, 128, 2))
+    in_shape = int(np.prod((128, 128, 2)))
     out_shape = 11
     n_step = args.data_length
     cache_dir = args.data_folder
@@ -213,7 +256,7 @@ def load_gesture_data(args):
         batch_size=args.batch_size,
         collate_fn=numpy_collate,
         num_workers=args.num_workers,
-        drop_last=args.drop_last == 1,
+        drop_last=False,
     )
     test_loader = DataLoader(
         test_set,
@@ -229,12 +272,15 @@ def load_gesture_data(args):
             'test_loader': test_loader,
             'in_shape': in_shape,
             'out_shape': out_shape,
+            'input_process': lambda x: x,
         }
     )
 
 
 def load_dataset(args):
-    if args.dataset_name == 'shd':
+    if args.dataset_name == 'nmnist':
+        return load_nmnist_data(args)
+    elif args.dataset_name == 'shd':
         return load_shd_data(args)
     elif args.dataset_name == 'ssc':
         return load_ssc_data(args)

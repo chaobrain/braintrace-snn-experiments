@@ -18,6 +18,8 @@
 import os
 import sys
 
+import numpy as np
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
 from bst_utils import MyArgumentParser
 
@@ -35,21 +37,27 @@ def parse_args():
     parser.add_argument("--warmup", type=float, default=0., help="The ratio for network simulation.")
 
     # Model
+    parser.add_argument("--threshold", type=float, default=0.9, help="")
     parser.add_argument("--epoch_per_step", type=int, default=5, help="epoch_per_step")
-    parser.add_argument("--neuron", type=str, default='gifv1', help="str: neuron type")
     parser.add_argument("--diff_spike", type=int, default=0, help="0: False, 1: True")
     parser.add_argument("--dt", type=float, default=1., help="")
     parser.add_argument("--net", type=str, default='coba', choices=['coba', 'cuba'], help="")
     parser.add_argument("--n_rec", type=int, default=200, help="")
+    parser.add_argument("--sparsity", type=float, default=0.1, help="")
     parser.add_argument("--w_ei_ratio", type=float, default=4., help="")
     parser.add_argument("--ff_scale", type=float, default=1., help="")
     parser.add_argument("--rec_scale", type=float, default=0.5, help="")
-    parser.add_argument("--beta", type=float, default=1.0, help="")
-    parser.add_argument("--tau_a", type=float, default=1000., help="")
+    parser.add_argument("--A2", type=float, default=1., help="")
+    parser.add_argument("--tau_I2", type=float, default=1000., help="")
+    parser.add_argument("--A1", type=float, default=0.01, help="")
+    parser.add_argument("--tau_I1", type=float, default=50.0, help="")
+    parser.add_argument("--tau_th", type=float, default=100., help="")
+    parser.add_argument("--Ath", type=float, default=1., help="")
     parser.add_argument("--tau_neu", type=float, default=100., help="")
     parser.add_argument("--tau_syn", type=float, default=10., help="")
     parser.add_argument("--tau_out", type=float, default=10., help="")
     parser.add_argument("--exp_name", type=str, default='', help="")
+    parser.add_argument("--seed", type=int, default=-1, help="")
 
     # Training parameters
     parser.add_argument("--mode", type=str, default='train', choices=['sim', 'train'], help="")
@@ -58,4 +66,9 @@ def parse_args():
     parser.add_argument("--weight_L1", type=float, default=0.0, help="The weight L1 regularization.")
     parser.add_argument("--weight_L2", type=float, default=0.0, help="The weight L2 regularization.")
     gargs = parser.parse_args()
+
+    if gargs.seed < 0:
+        gargs.seed = int(np.random.randint(0, 10000))  # Set a random seed for reproducibility
     return gargs
+
+

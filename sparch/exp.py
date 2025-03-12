@@ -29,7 +29,7 @@ import brainstate
 from args import print_training_options, print_model_options
 from bst_utils import setup_logging, load_model_states, save_model_states
 from snns import SNN
-from spiking_datasets import load_shd_or_ssc
+from spiking_datasets import load_dataset
 
 
 class Experiment(brainstate.util.PrettyObject):
@@ -117,11 +117,8 @@ class Experiment(brainstate.util.PrettyObject):
             )
 
         # Test trained model
-        if self.dataset_name in ["sc", "ssc"]:
-            self.test_one_epoch(self.test_loader)
-        else:
-            self.test_one_epoch(self.valid_loader)
-            self.logger.warning("\nThis dataset uses the same split for validation and testing.\n")
+        self.test_one_epoch(self.valid_loader)
+        self.logger.warning("\nThis dataset uses the same split for validation and testing.\n")
 
     def _loss(self, predictions, targets):
         return braintools.metric.softmax_cross_entropy_with_integer_labels(predictions, targets).mean()
@@ -271,12 +268,16 @@ class Experiment(brainstate.util.PrettyObject):
 
         else:
             # Generate a path for new model from chosen config
-            outname = self.args.method + "_" + self.dataset_name + "_" + self.net_type + "_"
+            if self.args.method  == 'esd-rtrl':
+                outname = f'{self.args.method}_{self.args.etrace_decay}_{self.dataset_name}/'
+            else:
+                outname = f'{self.args.method}_{self.dataset_name}/'
+            outname = outname + self.net_type + "_"
             outname += str(self.nb_layers) + "lay" + str(self.nb_hiddens)
             outname += "_drop" + str(self.pdrop) + "_" + str(self.normalization)
             outname += "_bias" if self.use_bias else "_nobias"
             outname += "_lr" + str(self.lr)
-            exp_folder = f"exp-all/{outname.replace('.', '_')}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            exp_folder = f"{outname.replace('.', '_')}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
         # For a new model check that out path does not exist
         if os.path.exists(exp_folder):
@@ -296,42 +297,15 @@ class Experiment(brainstate.util.PrettyObject):
         """
         This function prepares dataloaders for the desired dataset.
         """
-        # For the spiking datasets
-        if self.dataset_name in ["shd", "ssc"]:
+        results = load_dataset(self.args)
 
-            self.nb_inputs = 700
-            self.nb_outputs = 20 if self.dataset_name == "shd" else 35
+        self.nb_inputs = results['in_shape']
+        self.nb_outputs = results['out_shape']
 
-            self.train_loader = load_shd_or_ssc(
-                dataset_name=self.dataset_name,
-                data_folder=self.data_folder,
-                split="train",
-                batch_size=self.batch_size,
-                nb_steps=100,
-                shuffle=True,
-            )
-            self.valid_loader = load_shd_or_ssc(
-                dataset_name=self.dataset_name,
-                data_folder=self.data_folder,
-                split="valid",
-                batch_size=self.batch_size,
-                nb_steps=100,
-                shuffle=False,
-            )
-            if self.dataset_name == "ssc":
-                self.test_loader = load_shd_or_ssc(
-                    dataset_name=self.dataset_name,
-                    data_folder=self.data_folder,
-                    split="test",
-                    batch_size=self.batch_size,
-                    nb_steps=100,
-                    shuffle=False,
-                )
-            if self.use_augm:
-                self.logger.warning("\nWarning: Data augmentation not implemented for SHD and SSC.\n")
-
-        else:
-            raise ValueError(f"Invalid dataset name {self.dataset_name}")
+        self.train_loader = results['train_loader']
+        self.valid_loader = results['test_loader']
+        if self.use_augm:
+            self.logger.warning("\nWarning: Data augmentation not implemented for SHD and SSC.\n")
 
     def init_model(self):
         """
@@ -367,7 +341,7 @@ class Experiment(brainstate.util.PrettyObject):
         losses, accs = [], []
 
         # Loop over batches from train set
-        for step, (x, _, y) in enumerate(self.train_loader):
+        for step, (x, y) in enumerate(self.train_loader):
             # Forward pass through network
             x = jnp.asarray(x)  # images:[bs, 1, 28, 28]
             y = jnp.asarray(y)
@@ -402,7 +376,7 @@ class Experiment(brainstate.util.PrettyObject):
         losses, accs = [], []
 
         # Loop over batches from validation set
-        for step, (x, _, y) in enumerate(self.valid_loader):
+        for step, (x, y) in enumerate(self.valid_loader):
             # Forward pass through network
             x = jnp.asarray(x)  # images:[bs, 1, 28, 28]
             y = jnp.asarray(y)
@@ -450,7 +424,7 @@ class Experiment(brainstate.util.PrettyObject):
         self.logger.warning("\n------ Begin Testing ------\n")
 
         # Loop over batches from test set
-        for step, (x, _, y) in enumerate(test_loader):
+        for step, (x, y) in enumerate(test_loader):
             # Forward pass through network
             x = jnp.asarray(x)  # images:[bs, 1, 28, 28]
             y = jnp.asarray(y)

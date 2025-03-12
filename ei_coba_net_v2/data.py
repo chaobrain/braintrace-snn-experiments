@@ -142,3 +142,7 @@ class EvidenceAccumulation:
     def __iter__(self):
         while True:
             yield self.sampling(brainstate.random.split_key(self.batch_size))
+
+
+
+

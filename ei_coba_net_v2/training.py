@@ -14,7 +14,6 @@
 # ==============================================================================
 
 import os
-import os.path
 import platform
 import sys
 import time
@@ -32,6 +31,8 @@ sys.path.append('D:/codes/projects/brainevent')
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
 from args import parse_args
 
+global_args = parse_args()
+
 if not platform.platform().startswith('Windows'):
     import matplotlib
 
@@ -48,11 +49,27 @@ from data import EvidenceAccumulation
 from model import _SNNEINet, SNNCubaNet, SNNCobaNet
 
 
+class ExponentialSmooth(object):
+    def __init__(self, decay: float = 0.8):
+        self.decay = decay
+        self.value = None
+
+    def update(self, value):
+        if self.value is None:
+            self.value = value
+        else:
+            self.value = self.decay * self.value + (1 - self.decay) * value
+        return self.value
+
+    def __call__(self, value, i: int = None):
+        return self.update(value)  # / (1. - self.decay ** (i + 1))
+
+
 class Trainer:
     def __init__(
         self,
         target_net: _SNNEINet,
-        loader: EvidenceAccumulation,
+        task_loader: EvidenceAccumulation,
         args: brainstate.util.DotDict,
         lr: float,
         filepath: str | None = None
@@ -61,7 +78,7 @@ class Trainer:
         self.target = target_net
 
         # the dataset
-        self.loader = loader
+        self.task_loader = task_loader
 
         # parameters
         self.args = args
@@ -72,6 +89,8 @@ class Trainer:
         lr = brainstate.optim.StepLR(lr, step_size=args.epoch_per_step, gamma=0.9)
         self.optimizer = brainstate.optim.Adam(lr=lr)
         self.optimizer.register_trainable_weights(self.trainable_weights)
+
+        self.smoother = ExponentialSmooth()
 
     def print(self, msg, file=None):
         if file is not None:
@@ -145,10 +164,12 @@ class Trainer:
 
         def _etrace_step(prev_grads, inp):
             # no need to return weights and states, since they are generated then no longer needed
-            f_grad = brainstate.augment.grad(_etrace_grad,
-                                             grad_states=self.trainable_weights,
-                                             has_aux=True,
-                                             return_value=True)
+            f_grad = brainstate.augment.grad(
+                _etrace_grad,
+                grad_states=self.trainable_weights,
+                has_aux=True,
+                return_value=True
+            )
             cur_grads, local_loss, (out, mse_l, l1) = f_grad(inp)
             next_grads = jax.tree.map(lambda a, b: a + b, prev_grads, cur_grads)
             return next_grads, (out, mse_l, l1)
@@ -170,7 +191,11 @@ class Trainer:
             r = _etrace_train(inputs[n_sim:])
         else:
             r = _etrace_train(inputs)
-        return r
+        mem = jax.pure_callback(
+            lambda: jax.devices()[0].memory_stats()['bytes_in_use'] / 1024 / 1024 / 1024,
+            jax.ShapeDtypeStruct((), brainstate.environ.dftype())
+        )
+        return r + (mem,)
 
     @brainstate.compile.jit(static_argnums=(0,))
     def bptt_train(self, inputs, targets) -> Tuple:
@@ -193,15 +218,23 @@ class Trainer:
             acc = self._acc(outs[n_sim:], targets)
             return mse_losses + l1_losses, (mse_losses, l1_losses, acc)
 
-        f_grad = brainstate.augment.grad(_bptt_grad, grad_states=self.trainable_weights, has_aux=True,
-                                         return_value=True)
+        f_grad = brainstate.augment.grad(
+            _bptt_grad,
+            grad_states=self.trainable_weights,
+            has_aux=True,
+            return_value=True
+        )
         grads, loss, (mse_losses, l1_losses, acc) = f_grad()
         grads = brainstate.functional.clip_grad_norm(grads, 1.)
         self.optimizer.update(grads)
-        return mse_losses, l1_losses, acc
+        mem = jax.pure_callback(
+            lambda: jax.devices()[0].memory_stats()['bytes_in_use'] / 1024 / 1024 / 1024,
+            jax.ShapeDtypeStruct((), brainstate.environ.dftype())
+        )
+        return mse_losses, l1_losses, acc, mem
 
     def f_sim(self):
-        inputs, outputs = next(iter(self.loader))
+        inputs, outputs = next(iter(self.task_loader))
         inputs = jnp.asarray(inputs, dtype=brainstate.environ.dftype()).transpose(1, 0, 2)
         self.target.visualize(inputs)
 
@@ -214,17 +247,15 @@ class Trainer:
 
         acc_max = 0.
         t0 = time.time()
-        for bar_idx, (inputs, outputs) in enumerate(self.loader):
+        for bar_idx, (inputs, outputs) in enumerate(self.task_loader):
             if bar_idx > self.args.epochs:
                 break
 
             inputs = jnp.asarray(inputs, dtype=brainstate.environ.dftype()).transpose(1, 0, 2)
             outputs = jnp.asarray(outputs, dtype=brainstate.environ.ditype())
-            mse_ls, l1_ls, acc = (
-                self.bptt_train(inputs, outputs)
-                if self.args.method == 'bptt' else
-                self.etrace_train(inputs, outputs)
-            )
+
+            fun = (self.bptt_train if self.args.method == 'bptt' else self.etrace_train)
+            mse_ls, l1_ls, acc, mem = fun(inputs, outputs)
             self.optimizer.lr.step_epoch()
             desc = (
                 f'Batch {bar_idx:2d}, '
@@ -232,26 +263,31 @@ class Trainer:
                 f'L1={float(l1_ls):.6f}, '
                 f'acc={float(acc):.6f}, '
                 f'lr={self.optimizer.lr():.6f}, '
+                f'mem={mem:.6f} GB, '
                 f'time={time.time() - t0:.2f} s'
             )
             self.print(desc, file=file)
-
-            if acc > acc_max:
-                acc_max = acc
-                if self.filepath is not None:
-                    self.target.save_state()
-                    self.target.visualize(inputs, filename=f'{self.filepath}/train-results-{bar_idx}.png')
+            self.smoother.update(acc)
 
             t0 = time.time()
-            if acc_max > 0.95:
-                print(f'Accuracy reaches 95% at {bar_idx}th epoch. Stop training.')
+            if self.smoother.value >= self.args.threshold:
+                if self.filepath is not None:
+                    braintools.file.msgpack_save(
+                        f'{self.filepath}/best_model.msgpack',
+                        self.target.states(brainstate.ParamState).to_nest()
+                    )
+                    self.target.visualize(
+                        inputs,
+                        filename=f'{self.filepath}/train-results-{bar_idx}.png'
+                    )
+                print(f'Accuracy reaches {self.args.threshold * 100}% at {bar_idx}th epoch. Stop training.')
                 break
         if file is not None:
             file.close()
 
 
 def training():
-    gargs = parse_args()
+    gargs = global_args
     brainstate.environ.set(dt=gargs.dt)
 
     # filepath
@@ -260,36 +296,33 @@ def training():
     if gargs.exp_name:
         exp_name += gargs.exp_name + '/'
     filepath = f'{exp_name}/{gargs.method}'
+    if gargs.method != 'bptt':
+        filepath += f'-{gargs.vjp_method}'
     if gargs.method == 'esd-rtrl':
         filepath = f'{filepath}-etrace={gargs.etrace_decay}'
-    filepath = f'{filepath}/tau_a={gargs.tau_a}-tau_neu={gargs.tau_neu}-tau_syn={gargs.tau_syn}-{now}'
+    filepath = (
+        f'{filepath}/'
+        f'tau_I1={gargs.tau_I1}-A1={gargs.A1}-tau_I2={gargs.tau_I2}-A2={gargs.A2}-'
+        f'tau_neu={gargs.tau_neu}-tau_syn={gargs.tau_syn}-{now}'
+    )
 
     # data
     with brainstate.environ.context(dt=brainstate.environ.get_dt() * u.ms):
-        loader = EvidenceAccumulation(batch_size=gargs.batch_size)
-    gargs.warmup = -(loader.t_recall / u.ms / brainstate.environ.get_dt())
+        task_loader = EvidenceAccumulation(batch_size=gargs.batch_size)
+    gargs.warmup = -(task_loader.t_recall / u.ms / brainstate.environ.get_dt())
 
     # network
     cls = SNNCobaNet if gargs.net == 'coba' else SNNCubaNet
     net = cls(
-        loader.num_inputs,
+        task_loader.num_inputs,
         gargs.n_rec,
-        loader.num_outputs,
-        beta=gargs.beta,
-        tau_a=gargs.tau_a,
-        tau_neu=gargs.tau_neu,
-        tau_syn=gargs.tau_syn,
-        tau_out=gargs.tau_out,
-        ff_scale=gargs.ff_scale,
-        rec_scale=gargs.rec_scale,
-        w_ei_ratio=gargs.w_ei_ratio,
+        task_loader.num_outputs,
+        args=gargs,
         filepath=filepath,
-        diff_spike=gargs.diff_spike,
-        neuron_type=gargs.neuron_type,
     )
 
     # trainer
-    trainer = Trainer(net, loader, gargs, lr=gargs.lr, filepath=filepath)
+    trainer = Trainer(net, task_loader, gargs, lr=gargs.lr, filepath=filepath)
     if gargs.mode == 'sim':
         trainer.f_sim()
     else:
@@ -298,4 +331,3 @@ def training():
 
 if __name__ == '__main__':
     training()
-

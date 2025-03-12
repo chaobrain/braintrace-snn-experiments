@@ -295,23 +295,20 @@ class GifNet(brainstate.nn.Module):
             model = brainscale.IODimVjpAlgorithm(
                 _single_step,
                 int(global_args.etrace_decay) if global_args.etrace_decay > 1. else global_args.etrace_decay,
-                diag_normalize=diag_norm_mapping[global_args.diag_normalize],
-                vjp_time=global_args.vjp_time,
+                vjp_method=global_args.vjp_time,
             )
             model.compile_graph(0, jax.ShapeDtypeStruct(inputs.shape[1:], inputs.dtype))
         elif global_args.method == 'diag':
             model = brainscale.ParamDimVjpAlgorithm(
                 _single_step,
-                diag_normalize=diag_norm_mapping[global_args.diag_normalize],
-                vjp_time=global_args.vjp_time,
+                vjp_method=global_args.vjp_time,
             )
             model.compile_graph(0, jax.ShapeDtypeStruct(inputs.shape[1:], inputs.dtype))
         elif global_args.method == 'hybrid':
             model = brainscale.HybridDimVjpAlgorithm(
                 _single_step,
                 int(global_args.etrace_decay) if global_args.etrace_decay > 1. else global_args.etrace_decay,
-                diag_normalize=diag_norm_mapping[global_args.diag_normalize],
-                vjp_time=global_args.vjp_time,
+                vjp_method=global_args.vjp_time,
             )
             model.compile_graph(0, jax.ShapeDtypeStruct(inputs.shape[1:], inputs.dtype))
         else:
@@ -477,23 +474,20 @@ class Trainer(object):
             model = brainscale.IODimVjpAlgorithm(
                 _single_step,
                 int(self.args.etrace_decay) if self.args.etrace_decay > 1. else self.args.etrace_decay,
-                diag_normalize=diag_norm_mapping[self.args.diag_normalize],
-                vjp_time=self.args.vjp_time,
+                vjp_method=self.args.vjp_time,
             )
             model.compile_graph(0, jax.ShapeDtypeStruct(inputs.shape[1:], inputs.dtype))
         elif self.args.method == 'diag':
             model = brainscale.ParamDimVjpAlgorithm(
                 _single_step,
-                diag_normalize=diag_norm_mapping[self.args.diag_normalize],
-                vjp_time=self.args.vjp_time,
+                vjp_method=self.args.vjp_time,
             )
             model.compile_graph(0, jax.ShapeDtypeStruct(inputs.shape[1:], inputs.dtype))
         elif self.args.method == 'hybrid':
             model = brainscale.HybridDimVjpAlgorithm(
                 _single_step,
                 int(self.args.etrace_decay) if self.args.etrace_decay > 1. else self.args.etrace_decay,
-                diag_normalize=diag_norm_mapping[self.args.diag_normalize],
-                vjp_time=self.args.vjp_time,
+                vjp_method=self.args.vjp_time,
             )
             model.compile_graph(0, jax.ShapeDtypeStruct(inputs.shape[1:], inputs.dtype))
         else:
@@ -744,7 +738,7 @@ class DMS(IterableDataset):
         # to spiking
         if is_spiking_mode:
             X = np.random.random(X.shape) < X
-            X = X.astype(np.float_)
+            X = X.astype(np.float32)
 
         # can use a greater weight for test period if needed
         return X, match
@@ -1165,10 +1159,7 @@ def show_diag_etrace():
 
 def network_training():
     # environment setting
-    brainstate.environ.set(
-        mode=brainstate.mixin.JointMode(brainstate.mixin.Batching(), brainstate.mixin.Training()),
-        dt=global_args.dt
-    )
+    brainstate.environ.set(dt=global_args.dt)
 
     # get file path to output
     if global_args.filepath:
@@ -1180,18 +1171,21 @@ def network_training():
         now = time.strftime('%Y-%m-%d %H-%M-%S', time.localtime(int(round(time.time() * 1000)) / 1000))
         param = (
             f't_delay={global_args.t_delay}-'
-            f'tau_I2={global_args.tau_I2}-tau_neu={global_args.tau_neu}-'
-            f'tau_syn={global_args.tau_syn}-A2={global_args.A2}-'
-            f'ffscale={global_args.ff_scale}-recscale={global_args.rec_scale}-'
+            f'tau_I2={global_args.tau_I2}-'
+            f'tau_neu={global_args.tau_neu}-'
+            f'tau_syn={global_args.tau_syn}-'
+            f'A2={global_args.A2}-'
+            f'ffscale={global_args.ff_scale}-'
+            f'recscale={global_args.rec_scale}-'
             f'diff_spike={global_args.diff_spike}-{now}'
         )
         if global_args.method == 'bptt':
             filepath = f'{aim}/{global_args.method}/{param}'
         elif global_args.method == 'diag':
-            filepath = f'{aim}/{global_args.method} {global_args.vjp_time} {global_args.diag_normalize}/{param}'
+            filepath = f'{aim}/{global_args.method} {global_args.vjp_time}/{param}'
         else:
             filepath = (
-                f'{aim}/{global_args.method} {global_args.vjp_time} {global_args.diag_normalize} '
+                f'{aim}/{global_args.method} {global_args.vjp_time} '
                 f'decay={global_args.etrace_decay}/{param}'
             )
     # filepath = None

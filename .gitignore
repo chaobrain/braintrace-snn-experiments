@@ -244,3 +244,16 @@ cython_debug/
 /sparch/exp-esd-rtrl/
 /sparch/exp-bptt/
 /ei_coba_task/results/
+/sparch/exp-esd-rtrl-0.99/
+/sparch/esd-rtrl_0_9_nmnist/
+/ei_coba_net_v2/results/
+/ei_coba_net_v2/results-v2/
+/ei_coba_net_v2/visualization/
+/ei_coba_net_v2/results-mem=200/
+/ei_coba_net_v2/results-for-analysis/
+/ei_coba_net_v2/results-with-diff-spk-for-acc/
+/ei_coba_net_v2/results-for-mem-eval/
+/old/
+/ei_coba_net_v2/results-without-diff-spk-for-acc/
+/ei_coba_net_v2/others/
+/sparch/others/

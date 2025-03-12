@@ -58,7 +58,7 @@ def _dvs_gesture_preprocessing(num_workers: int, n_step: int = 100, cache_dir=os
 
     for loader, filename in [(train_loader, train_filename),
                              (test_loader, test_filename)]:
-        xs_row, xs_col, xs_data, ys = [], [], [], []
+        xs_row, xs_col, xs_data, ys_all = [], [], [], []
         for i, (xs, ys) in tqdm(enumerate(loader), total=len(loader), desc='preprocessing'):
             for x in xs:
                 x = np.asarray(x)
@@ -66,17 +66,18 @@ def _dvs_gesture_preprocessing(num_workers: int, n_step: int = 100, cache_dir=os
                 xs_row.append(csr.row)
                 xs_col.append(csr.col)
                 xs_data.append(csr.data)
-            ys.append(np.asarray(ys))
-        img_size = (x.shape[1], np.prod(x.shape[2:]))
+            ys_all.append(np.asarray(ys))
+        img_size = x.shape[1:]
         xs_row = np.asarray(xs_row, dtype=object)
         xs_col = np.asarray(xs_col, dtype=object)
         xs_data = np.asarray(xs_data, dtype=object)
-        ys = np.concatenate(ys)
+        ys_all = np.concatenate(ys_all)
         np.savez(
             filename,
             xs_row=xs_row,
             xs_col=xs_col,
-            xs_data=xs_data, ys=ys,
+            xs_data=xs_data,
+            ys=ys_all,
             img_size=np.asarray(img_size, dtype=np.int32)
         )
 

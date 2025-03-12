@@ -57,10 +57,6 @@ class MyArgumentParser(argparse.ArgumentParser):
         # training method
         if args.method != 'bptt':
             self.add_argument(
-                "--diag_normalize", type=int, default=0, choices=[0, 1, 2],
-                help="Normalize the diagonal jacobian (0 - None, 1 - True, 2 - False)."
-            )
-            self.add_argument(
                 "--vjp_time", type=str, default='t', choices=['t', 't_minus_1'],
                 help="The VJP time,should be t or t-1."
             )
