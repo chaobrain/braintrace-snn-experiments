@@ -209,14 +209,18 @@ class FormattedDVSGesture:
         self.xs_col = data['xs_col']
         self.xs_data = data['xs_data']
         self.ys = data['ys']
-        self.img_size = data['img_size']
+        img_size = data['img_size']
+        self.img_size = (int(img_size[0]), int(np.prod(img_size[1:])))
 
-    def __getitem__(self, idx):
-        arr = np.zeros(tuple(self.img_size), dtype=brainstate.environ.dftype())
+    def load(self, idx):
+        arr = np.zeros(self.img_size, dtype=np.float32)
         row = self.xs_row[idx]
         col = self.xs_col[idx]
-        data = self.xs_data[idx]
-        arr[row, col] = data
+        arr[row, col] = self.xs_data[idx]
+        return arr
+
+    def __getitem__(self, idx):
+        arr = self.load(idx)
         y = self.ys[idx]
         return arr, y
 

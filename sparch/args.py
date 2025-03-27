@@ -58,6 +58,7 @@ elif platform.platform() == 'Linux-6.8.0-48-generic-x86_64-with-glibc2.35':
     num_worker = 10
 
 else:
+    num_worker = 8
     shd_path = None
     ssc_path = None
 

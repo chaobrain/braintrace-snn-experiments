@@ -1,5 +1,8 @@
 h5py
 numpy
 torch
-torchaudio
-torchaudio_augmentations
+brainstate
+braintools
+msgpack
+matplotlib
+tonic

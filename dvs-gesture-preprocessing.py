@@ -62,12 +62,12 @@ def _dvs_gesture_preprocessing(num_workers: int, n_step: int = 100, cache_dir=os
         for i, (xs, ys) in tqdm(enumerate(loader), total=len(loader), desc='preprocessing'):
             for x in xs:
                 x = np.asarray(x)
-                csr = coo_matrix(np.reshape(x, (x.shape[0], -1)))
-                xs_row.append(csr.row)
-                xs_col.append(csr.col)
-                xs_data.append(csr.data)
+                coo = coo_matrix(np.reshape(x, (x.shape[0], -1)))
+                xs_row.append(coo.row)
+                xs_col.append(coo.col)
+                xs_data.append(coo.data)
             ys_all.append(np.asarray(ys))
-        img_size = x.shape[1:]
+        img_size = xs.shape[1:]
         xs_row = np.asarray(xs_row, dtype=object)
         xs_col = np.asarray(xs_col, dtype=object)
         xs_data = np.asarray(xs_data, dtype=object)
@@ -84,5 +84,7 @@ def _dvs_gesture_preprocessing(num_workers: int, n_step: int = 100, cache_dir=os
 
 if __name__ == '__main__':
     for n_seq in [50, 100, 200, 300, 400, 600, 800, 1000]:
+    # for n_seq in [50,]:
+    # for n_seq in [200, 300]:
         print(f'Processing the data with length of {n_seq}')
-        _dvs_gesture_preprocessing(10, n_seq)
+        _dvs_gesture_preprocessing(0, n_seq)
