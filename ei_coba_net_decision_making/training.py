@@ -19,15 +19,6 @@ import sys
 import time
 from typing import Tuple
 
-# Linux
-sys.path.append('/mnt/d/codes/projects/brainscale')
-sys.path.append('/mnt/d/codes/projects/brainstate')
-sys.path.append('/mnt/d/codes/projects/brainevent')
-
-# windows
-sys.path.append('D:/codes/projects/brainscale')
-sys.path.append('D:/codes/projects/brainstate')
-sys.path.append('D:/codes/projects/brainevent')
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
 from args import parse_args
 
