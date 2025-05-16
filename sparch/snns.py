@@ -12,12 +12,11 @@ This is where the Spiking Neural Network (SNN) baseline is defined using the
 surrogate gradient method.
 """
 
+import brainscale
+import brainstate
 import jax
 import jax.numpy as jnp
 import numpy as np
-
-import brainscale
-import brainstate
 
 
 class SpikeFunctionBoxcar(brainstate.surrogate.Surrogate):
@@ -66,12 +65,14 @@ class SNN(brainstate.nn.Module):
         self,
         input_shape,
         layer_sizes,
-        neuron_type="LIF",
-        threshold=1.0,
-        dropout=0.0,
-        normalization="batchnorm",
-        use_bias=False,
-        use_readout_layer=True,
+        neuron_type: str = "LIF",
+        threshold: float = 1.0,
+        dropout: float = 0.0,
+        inp_scale: float = 5 ** 0.5,
+        rec_scale: float = 1.0,
+        normalization: str = "batchnorm",
+        use_bias: bool = False,
+        use_readout_layer: bool = True,
     ):
         super().__init__()
 
@@ -86,6 +87,8 @@ class SNN(brainstate.nn.Module):
         self.normalization = normalization
         self.use_bias = use_bias
         self.use_readout_layer = use_readout_layer
+        self.inp_scale = inp_scale
+        self.rec_scale = rec_scale
 
         if neuron_type not in ["LIF", "adLIF", "RLIF", "RadLIF"]:
             raise ValueError(f"Invalid neuron type {neuron_type}")
@@ -113,6 +116,8 @@ class SNN(brainstate.nn.Module):
                     dropout=self.dropout,
                     normalization=self.normalization,
                     use_bias=self.use_bias,
+                    inp_scale=self.inp_scale,
+                    rec_scale=self.rec_scale,
                 )
             )
             input_size = self.layer_sizes[i]
@@ -136,6 +141,24 @@ class SNN(brainstate.nn.Module):
         for i, snn_lay in enumerate(self.snn):
             x = snn_lay(x)
         return x
+
+
+class SNNExtractSpikes(brainstate.nn.Module):
+    def __init__(self, net: SNN):
+        super().__init__()
+        self.net = net
+
+    def update(self, x):
+        outs = []
+        layers = (
+            self.net.snn[:-1]
+            if self.net.use_readout_layer else
+            self.net.snn
+        )
+        for layer in layers:
+            x = layer(x)
+            outs.append(x)
+        return outs
 
 
 class LIFLayer(brainstate.nn.Module):
@@ -164,10 +187,12 @@ class LIFLayer(brainstate.nn.Module):
         self,
         input_size,
         hidden_size,
-        threshold=1.0,
-        dropout=0.0,
-        normalization="batchnorm",
-        use_bias=False,
+        threshold: float = 1.0,
+        dropout: float = 0.0,
+        normalization: str = "batchnorm",
+        use_bias: bool = False,
+        inp_scale: float = 5 ** 0.5,
+        rec_scale: float = 1.0,
     ):
         super().__init__()
 
@@ -184,8 +209,9 @@ class LIFLayer(brainstate.nn.Module):
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
         self.W = brainscale.nn.Linear(
-            self.input_size, self.hidden_size,
-            w_init=brainstate.init.KaimingUniform(5 ** 0.5),
+            self.input_size,
+            self.hidden_size,
+            w_init=brainstate.init.KaimingUniform(inp_scale),
             b_init=brainstate.init.Uniform(-bound, bound) if use_bias else None
         )
         self.alpha = brainscale.ElemWiseParam(
@@ -265,10 +291,12 @@ class adLIFLayer(brainstate.nn.Module):
         self,
         input_size,
         hidden_size,
-        threshold=1.0,
-        dropout=0.0,
-        normalization="batchnorm",
-        use_bias=False,
+        threshold: float = 1.0,
+        dropout: float = 0.0,
+        normalization: str = "batchnorm",
+        use_bias: bool = False,
+        inp_scale: float = 5 ** 0.5,
+        rec_scale: float = 1.0,
     ):
         super().__init__()
 
@@ -289,7 +317,7 @@ class adLIFLayer(brainstate.nn.Module):
         bound = 1 / self.input_size ** 0.5
         self.W = brainscale.nn.Linear(
             self.input_size, self.hidden_size,
-            w_init=brainstate.init.KaimingUniform(5 ** 0.5),
+            w_init=brainstate.init.KaimingUniform(inp_scale),
             b_init=brainstate.init.Uniform(-bound, bound) if use_bias else None
         )
         self.alpha = brainscale.ElemWiseParam(
@@ -385,10 +413,12 @@ class RLIFLayer(brainstate.nn.Module):
         self,
         input_size,
         hidden_size,
-        threshold=1.0,
-        dropout=0.0,
-        normalization="batchnorm",
-        use_bias=False,
+        threshold: float = 1.0,
+        dropout: float = 0.0,
+        normalization: str = "batchnorm",
+        use_bias: bool = False,
+        inp_scale: float = 5 ** 0.5,
+        rec_scale: float = 1.0,
     ):
         super().__init__()
 
@@ -406,7 +436,7 @@ class RLIFLayer(brainstate.nn.Module):
         bound = 1 / self.input_size ** 0.5
         self.W = brainscale.nn.Linear(
             self.input_size, self.hidden_size,
-            w_init=brainstate.init.KaimingUniform(5 ** 0.5),
+            w_init=brainstate.init.KaimingUniform(inp_scale),
             b_init=brainstate.init.Uniform(-bound, bound) if use_bias else None
         )
         # Set diagonal elements of recurrent matrix to zero
@@ -414,7 +444,7 @@ class RLIFLayer(brainstate.nn.Module):
         w_mask = jnp.fill_diagonal(w_mask, 0, inplace=False)
         self.V = brainscale.nn.Linear(
             self.hidden_size, self.hidden_size,
-            w_init=brainstate.init.Orthogonal(), b_init=None,
+            w_init=brainstate.init.Orthogonal(rec_scale), b_init=None,
             w_mask=w_mask
         )
         self.alpha = brainscale.ElemWiseParam(
@@ -495,10 +525,12 @@ class RadLIFLayer(brainstate.nn.Module):
         self,
         input_size,
         hidden_size,
-        threshold=1.0,
-        dropout=0.0,
-        normalization="batchnorm",
-        use_bias=False,
+        threshold: float = 1.0,
+        dropout: float = 0.0,
+        normalization: str = "batchnorm",
+        use_bias: bool = False,
+        inp_scale: float = 5 ** 0.5,
+        rec_scale: float = 1.0,
     ):
         super().__init__()
 
@@ -519,7 +551,7 @@ class RadLIFLayer(brainstate.nn.Module):
         bound = 1 / self.input_size ** 0.5
         self.W = brainscale.nn.Linear(
             self.input_size, self.hidden_size,
-            w_init=brainstate.init.KaimingUniform(5 ** 0.5),
+            w_init=brainstate.init.KaimingUniform(inp_scale),
             b_init=brainstate.init.Uniform(-bound, bound) if use_bias else None
         )
         # Set diagonal elements of recurrent matrix to zero
@@ -527,7 +559,7 @@ class RadLIFLayer(brainstate.nn.Module):
         w_mask = jnp.fill_diagonal(w_mask, 0, inplace=False)
         self.V = brainscale.nn.Linear(
             self.hidden_size, self.hidden_size,
-            w_init=brainstate.init.Orthogonal(), b_init=None, w_mask=w_mask
+            w_init=brainstate.init.Orthogonal(rec_scale), b_init=None, w_mask=w_mask
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
@@ -622,9 +654,9 @@ class ReadoutLayer(brainstate.nn.Module):
         self,
         input_size,
         hidden_size,
-        dropout=0.0,
-        normalization="batchnorm",
-        use_bias=False,
+        dropout: float = 0.0,
+        normalization: str = "batchnorm",
+        use_bias: bool = False,
     ):
         super().__init__()
 

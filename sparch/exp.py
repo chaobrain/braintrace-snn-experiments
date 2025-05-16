@@ -18,17 +18,18 @@ import os
 import time
 from datetime import timedelta
 
+import brainscale
+import brainstate
 import braintools
 import brainunit as u
 import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import numpy as np
 
-import brainscale
-import brainstate
 from args import print_training_options, print_model_options
-from bst_utils import setup_logging, load_model_states, save_model_states
-from snns import SNN
+from general_utils import setup_logging, load_model_states, save_model_states
+from snns import SNN, SNNExtractSpikes
 from spiking_datasets import load_dataset
 
 
@@ -59,8 +60,6 @@ class Experiment(brainstate.util.PrettyObject):
         self.nb_epochs = args.nb_epochs
         self.start_epoch = args.start_epoch
         self.lr = args.lr
-        self.scheduler_patience = args.scheduler_patience
-        self.scheduler_factor = args.scheduler_factor
         self.use_augm = args.use_augm
 
         # Initialize logging and output folders
@@ -75,19 +74,9 @@ class Experiment(brainstate.util.PrettyObject):
 
         # Define optimizer
         self.trainable_weights = self.net.states(brainstate.ParamState)
-
-        lr = brainstate.optim.StepLR(self.lr, step_size=10, gamma=0.9)
+        lr = brainstate.optim.StepLR(self.lr, step_size=args.lr_step_size, gamma=args.lr_step_gamma)
         self.optimizer = brainstate.optim.Adam(lr)
         self.optimizer.register_trainable_weights(self.trainable_weights)
-        #
-        # # Define learning rate scheduler
-        # self.scheduler = ReduceLROnPlateau(
-        #     optimizer=self.optimizer,
-        #     mode="max",
-        #     factor=self.scheduler_factor,
-        #     patience=self.scheduler_patience,
-        #     min_lr=1e-6,
-        # )
 
     def f_train(self):
         """
@@ -120,6 +109,62 @@ class Experiment(brainstate.util.PrettyObject):
         self.test_one_epoch(self.valid_loader)
         self.logger.warning("\nThis dataset uses the same split for validation and testing.\n")
 
+    def f_test(self, n_fig=5):
+
+        data = iter(self.valid_loader)
+
+        for _ in range(5):
+            x, y = next(data)
+
+            # validation
+            x = jnp.asarray(x)
+            print(x.shape)
+            outs = self._validate(x)
+            outs = jax.tree.map(np.asarray, outs)
+
+            # visualization
+            fig, gs = braintools.visualize.get_figure(len(outs), n_fig, 3, 3)
+            for i, out in enumerate(outs):
+                for i_img in range(n_fig):
+                    fig.add_subplot(gs[i, i_img])
+                    spikes = out[:, i_img]
+                    spikes = np.reshape(spikes, (spikes.shape[0], -1))
+                    # Create a raster plot of spikes
+                    neuron_indices = np.where(spikes > 0)
+                    plt.scatter(neuron_indices[0], neuron_indices[1], s=1, c='black', marker='|')
+                    plt.ylabel('Neuron Index')
+                    plt.xlabel('Time Step')
+                    plt.title(f'Sample {i_img}, Layer {i}')
+            plt.show()
+            plt.close()
+
+    def _validate(self, inputs):
+        inputs = self._process_input(inputs)
+
+        # add environment context
+        model = brainstate.nn.EnvironContext(
+            SNNExtractSpikes(self.net),
+            fit=False
+        )
+
+        # assume the inputs have shape (time, batch, features, ...)
+        n_time, n_batch = inputs.shape[:2]
+        brainstate.nn.vmap_init_all_states(
+            model,
+            state_tag='hidden',
+            axis_size=n_batch,
+        )
+        model = brainstate.nn.Vmap(
+            model,
+            vmap_states='hidden',
+            axis_name='batch' if self.normalization == 'batchnorm' else None
+        )
+
+        # forward propagation
+        outs = brainstate.compile.for_loop(model, inputs)
+
+        return outs
+
     def _loss(self, predictions, targets):
         return braintools.metric.softmax_cross_entropy_with_integer_labels(predictions, targets).mean()
 
@@ -140,7 +185,11 @@ class Experiment(brainstate.util.PrettyObject):
 
         # assume the inputs have shape (time, batch, features, ...)
         n_time, n_batch = inputs.shape[:2]
-        brainstate.nn.vmap_init_all_states(model, state_tag='hidden', axis_size=n_batch)
+        brainstate.nn.vmap_init_all_states(
+            model,
+            state_tag='hidden',
+            axis_size=n_batch,
+        )
         model = brainstate.nn.Vmap(
             model,
             vmap_states='hidden',
@@ -268,7 +317,7 @@ class Experiment(brainstate.util.PrettyObject):
 
         else:
             # Generate a path for new model from chosen config
-            if self.args.method  == 'esd-rtrl':
+            if self.args.method == 'esd-rtrl':
                 outname = f'{self.args.method}_{self.args.etrace_decay}_{self.dataset_name}/'
             else:
                 outname = f'{self.args.method}_{self.dataset_name}/'
@@ -323,6 +372,8 @@ class Experiment(brainstate.util.PrettyObject):
                 normalization=self.normalization,
                 use_bias=self.use_bias,
                 use_readout_layer=True,
+                inp_scale=self.args.inp_scale,
+                rec_scale=self.args.rec_scale,
             )
             self.logger.warning(f"\nCreated new spiking model:\n {self.net}\n")
 
@@ -395,7 +446,7 @@ class Experiment(brainstate.util.PrettyObject):
         # # Update learning rate
         # self.scheduler.step(valid_acc)
 
-        # Update best epoch and accuracy
+        # Update the best epoch and accuracy
         if valid_acc > best_acc:
             best_acc = valid_acc
             best_epoch = e

@@ -13,8 +13,8 @@
 # limitations under the License.
 # ==============================================================================
 
-import brainstate as bst
-import braintools as bts
+import brainstate
+import braintools
 import jax
 import matplotlib.pyplot as plt
 import numpy as np
@@ -95,9 +95,9 @@ def align_pre_visualize_x_truncated_normal_df_uniform(r=1000, m=10, n=10):
     @jax.vmap
     def sample(x_scale, b_f):
         b = 1000.
-        left = bst.random.truncated_normal(0., b, [r, m], x_mu, x_scale)
+        left = brainstate.random.truncated_normal(0., b, [r, m], x_mu, x_scale)
         # left = brainstate.random.uniform(0., x_scale, [r, m])
-        right = bst.random.uniform(0., b_f, [r, n])
+        right = brainstate.random.uniform(0., b_f, [r, n])
         l1 = jax.numpy.einsum('ri,rj->ij', left, right)
         l2 = jax.numpy.outer(left.mean(0), right.sum(0))
         cosine = cosine_similarity(l1, l2)
@@ -126,7 +126,7 @@ def align_pre_visualize_x_truncated_normal_df_uniform(r=1000, m=10, n=10):
     exp_results = exp_results.reshape(all_x_sigma2.shape)
     thy_results = thy_results.reshape(all_x_sigma2.shape)
 
-    fig, gs = bts.visualize.get_figure(1, 1, 4.5, 6.0)
+    fig, gs = braintools.visualize.get_figure(1, 1, 4.5, 6.0)
     ax = fig.add_subplot(gs[0, 0])
     pcm = plt.pcolormesh(all_x_sigma2, all_b_f2, exp_results, cmap='PuBu_r', shading='auto')
     cb = plt.colorbar(pcm, ax=ax, extend='max')
@@ -136,7 +136,7 @@ def align_pre_visualize_x_truncated_normal_df_uniform(r=1000, m=10, n=10):
     plt.ylabel('B f')
     plt.title('Cosine similarity')
 
-    fig, gs = bts.visualize.get_figure(1, 1, 4.5, 6.0)
+    fig, gs = braintools.visualize.get_figure(1, 1, 4.5, 6.0)
     ax = fig.add_subplot(gs[0, 0])
     pcm = plt.pcolormesh(all_x_sigma2, all_b_f2, thy_results, cmap='PuBu_r', shading='auto')
     cb = plt.colorbar(pcm, ax=ax, extend='max')
@@ -149,8 +149,8 @@ def align_pre_visualize_x_truncated_normal_df_uniform(r=1000, m=10, n=10):
 def align_pre_visualize_x_normal_df_uniform(r=1000, m=100, n=100):
     @jax.vmap
     def sample(x_scale, b_f):
-        left = bst.random.normal(0., x_scale, [r, m])
-        right = bst.random.uniform(0., b_f, [r, n])
+        left = brainstate.random.normal(0., x_scale, [r, m])
+        right = brainstate.random.uniform(0., b_f, [r, n])
         l1 = jax.numpy.einsum('ri,rj->ij', left, right)
         l2 = jax.numpy.outer(left.mean(0), right.sum(0))
         cosine = cosine_similarity(l1, l2)
@@ -169,7 +169,7 @@ def align_pre_visualize_x_normal_df_uniform(r=1000, m=100, n=100):
     exp_results = exp_results.reshape(all_x_sigma2.shape)
     thy_results = thy_results.reshape(all_x_sigma2.shape)
 
-    fig, gs = bts.visualize.get_figure(1, 1, 4.5, 6.0)
+    fig, gs = braintools.visualize.get_figure(1, 1, 4.5, 6.0)
     ax = fig.add_subplot(gs[0, 0])
     pcm = plt.pcolormesh(all_x_sigma2, all_b_f2, exp_results, cmap='PuBu_r', shading='auto')
     cb = plt.colorbar(pcm, ax=ax, extend='max')
@@ -179,7 +179,7 @@ def align_pre_visualize_x_normal_df_uniform(r=1000, m=100, n=100):
     plt.ylabel('B f')
     plt.title('Cosine similarity')
 
-    fig, gs = bts.visualize.get_figure(1, 1, 4.5, 6.0)
+    fig, gs = braintools.visualize.get_figure(1, 1, 4.5, 6.0)
     ax = fig.add_subplot(gs[0, 0])
     pcm = plt.pcolormesh(all_x_sigma2, all_b_f2, thy_results, cmap='PuBu_r', shading='auto')
     cb = plt.colorbar(pcm, ax=ax, extend='max')
@@ -192,8 +192,8 @@ def align_pre_visualize_x_normal_df_uniform(r=1000, m=100, n=100):
 def align_pre_visualize_x_binomial_df_uniform(r=10000, m=10, n=10):
     @jax.vmap
     def sample(p, b_f):
-        left = jax.numpy.asarray(bst.random.rand(r, m) < p, dtype=float)
-        right = bst.random.uniform(0., b_f, [r, n])
+        left = jax.numpy.asarray(brainstate.random.rand(r, m) < p, dtype=float)
+        right = brainstate.random.uniform(0., b_f, [r, n])
         l1 = jax.numpy.einsum('ri,rj->ij', left, right)
         l2 = jax.numpy.outer(left.mean(0), right.sum(0))
         cosine = cosine_similarity(l1, l2)
@@ -211,7 +211,7 @@ def align_pre_visualize_x_binomial_df_uniform(r=10000, m=10, n=10):
     exp_results = exp_results.reshape(all_x_sigma2.shape)
     thy_results = thy_results.reshape(all_x_sigma2.shape)
 
-    fig, gs = bts.visualize.get_figure(1, 1, 4.5, 6.0)
+    fig, gs = braintools.visualize.get_figure(1, 1, 4.5, 6.0)
     ax = fig.add_subplot(gs[0, 0])
     pcm = plt.pcolormesh(all_x_sigma2, all_b_f2, exp_results, cmap='PuBu_r', shading='auto')
     cb = plt.colorbar(pcm, ax=ax, extend='max')
@@ -219,7 +219,7 @@ def align_pre_visualize_x_binomial_df_uniform(r=10000, m=10, n=10):
     plt.ylabel('B f')
     plt.title('Cosine similarity')
 
-    fig, gs = bts.visualize.get_figure(1, 1, 4.5, 6.0)
+    fig, gs = braintools.visualize.get_figure(1, 1, 4.5, 6.0)
     ax = fig.add_subplot(gs[0, 0])
     pcm = plt.pcolormesh(all_x_sigma2, all_b_f2, thy_results, cmap='PuBu_r', shading='auto')
     cb = plt.colorbar(pcm, ax=ax, extend='max')
@@ -231,8 +231,8 @@ def align_pre_visualize_x_binomial_df_uniform(r=10000, m=10, n=10):
 
 def align_pre_visualize_x_binomial_df_normal(r=10000, m=10, n=10):
     def sample(p, b_scale):
-        left = jax.numpy.asarray(bst.random.rand(r, m) < p, dtype=float)
-        right = bst.random.normal(b_mu, b_scale, [r, n])
+        left = jax.numpy.asarray(brainstate.random.rand(r, m) < p, dtype=float)
+        right = brainstate.random.normal(b_mu, b_scale, [r, n])
         l1 = jax.numpy.einsum('ri,rj->ij', left, right)
         l2 = jax.numpy.outer(left.mean(0), right.sum(0))
         cosine = cosine_similarity(l1, l2)
@@ -249,7 +249,7 @@ def align_pre_visualize_x_binomial_df_normal(r=10000, m=10, n=10):
     all_b_scale = np.linspace(0.1, 100., 200)
     all_p2, all_b_scale2 = np.meshgrid(all_p, all_b_scale, indexing='ij')
 
-    exp_results, thy_results = bst.compile.for_loop(sample, all_p2.flatten(), all_b_scale2.flatten())
+    exp_results, thy_results = brainstate.compile.for_loop(sample, all_p2.flatten(), all_b_scale2.flatten())
     exp_results = np.asarray(exp_results.reshape(all_p2.shape))
     thy_results = np.asarray(thy_results.reshape(all_p2.shape))
 
@@ -261,7 +261,7 @@ def align_pre_visualize_x_binomial_df_normal(r=10000, m=10, n=10):
 
     # plt.style.use(['science', 'nature', 'notebook'])
 
-    fig, gs = bts.visualize.get_figure(1, 1, 4.5, 6.0)
+    fig, gs = braintools.visualize.get_figure(1, 1, 4.5, 6.0)
     ax = fig.add_subplot(gs[0, 0])
     # pcm = plt.pcolormesh(all_p2, all_b_scale2, exp_results, cmap='PuBu_r', shading='gouraud', vmin=0., vmax=1.)
     pcm = plt.pcolormesh(all_p2, all_b_scale2, exp_results, cmap='PuBu_r', shading='auto', vmin=0., vmax=1.)
@@ -271,7 +271,7 @@ def align_pre_visualize_x_binomial_df_normal(r=10000, m=10, n=10):
     plt.title('Cosine similarity')
     # plt.savefig('align-pre-cosine-exp.eps', format='eps')
 
-    fig, gs = bts.visualize.get_figure(1, 1, 4.5, 6.0)
+    fig, gs = braintools.visualize.get_figure(1, 1, 4.5, 6.0)
     ax = fig.add_subplot(gs[0, 0])
     pcm = plt.pcolormesh(all_p2, all_b_scale2, thy_results, cmap='PuBu_r', shading='auto', vmin=0., vmax=1.)
     cb = plt.colorbar(pcm, ax=ax, extend='max')

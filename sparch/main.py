@@ -4,8 +4,6 @@ This is the script used to run experiments.
 
 import os
 import sys
-import time
-# time.sleep(5 * 60 * 60)  # wait for 5 hours before starting
 
 # Linux
 sys.path.append('/mnt/d/codes/projects/brainscale')
@@ -21,7 +19,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
 
 from exp import Experiment
 from args import add_training_options, add_model_options
-from bst_utils import MyArgumentParser
+from general_utils import MyArgumentParser
 
 
 def parse_args():
@@ -45,7 +43,12 @@ def main():
     experiment = Experiment(args)
 
     # Run experiment
-    experiment.f_train()
+    if args.mode == 'train':
+        experiment.f_train()
+    elif args.mode == 'test':
+        experiment.f_test(8)
+    else:
+        raise ValueError("Mode must be either 'train' or 'test'")
 
 
 if __name__ == "__main__":

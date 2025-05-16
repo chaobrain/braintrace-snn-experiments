@@ -254,16 +254,16 @@ def _check_jacobian(
 
     # jacobian
     Jacobian = np.asarray(jax.jacrev(f)(s, inputs))
-    states.assign_values(state_vals)
+    states.assign_dict_values(state_vals)
 
     # diagonal
     # diagonal1 = brainstate.compile.vector_grad(f, argnums=0)(s, inputs)
-    # states.assign_values(state_vals)
+    # states.assign_dict_values(state_vals)
     with brainscale.stop_param_gradients():
         D = np.asarray(jax.jacrev(f, argnums=0)(s, inputs))
-        states.assign_values(state_vals)
+        states.assign_dict_values(state_vals)
         # diagonal = brainstate.compile.vector_grad(f, argnums=0)(s, inputs)
-        # states.assign_values(state_vals)
+        # states.assign_dict_values(state_vals)
         # D = np.diag(diagonal)
     # diff = diagonal1 - diagonal
 
@@ -339,7 +339,7 @@ def _compare_jac_one_step(model: brainstate.nn.Module, idx, inp):
 
     def jacobian():
         jac = jax.jacrev(step_run, argnums=0)(hidden, idx, inp)
-        states.assign_values(state_vals)
+        states.assign_dict_values(state_vals)
         return jac
 
     # compute jacobian and diagonal
@@ -596,41 +596,41 @@ def compare_jacobian_approx_on_real_dataset_v2(fn='analysis/jac_cosine_sim'):
     final_results = dict()
 
     for data_name, _, model, args in [
-        ('N-MNIST', None, LIF_Delta_Dense_Layer, dict(rec_wscale=0.2, ff_wscale=1.5, tau_mem=10.)),
+        ('N-MNIST', None, LIF_Delta_Dense_Layer, dict(rec_wscale=2, ff_wscale=15, tau_mem=10.)),
         ('N-MNIST', None, LIF_ExpCu_Dense_Layer,
-         dict(rec_wscale=10., ff_wscale=100., tau_mem=10., kwargs=dict(tau_syn=10.0))),
+         dict(rec_wscale=10., ff_wscale=30., tau_mem=10., kwargs=dict(tau_syn=10.0))),
         ('N-MNIST', None, LIF_STDExpCu_Dense_Layer,
-         dict(rec_wscale=40., ff_wscale=100., tau_mem=10., kwargs=dict(tau_std=200.0, tau_syn=10.0))),
+         dict(rec_wscale=10., ff_wscale=20., tau_mem=10., kwargs=dict(tau_std=200.0, tau_syn=10.0))),
         ('N-MNIST', None, LIF_STPExpCu_Dense_Layer,
          dict(rec_wscale=5., ff_wscale=100., tau_mem=10., kwargs=dict(tau_syn=10, tau_f=10, tau_d=100, ))),
         ('N-MNIST', None, ALIF_Delta_Dense_Layer, dict(rec_wscale=1., ff_wscale=1., tau_mem=10.)),
         ('N-MNIST', None, ALIF_ExpCu_Dense_Layer,
-         dict(rec_wscale=20., ff_wscale=100., tau_mem=10., kwargs=dict(tau_syn=10.0, tau_a=100.0))),
+         dict(rec_wscale=10., ff_wscale=20., tau_mem=10., kwargs=dict(tau_syn=10.0, tau_a=100.0))),
         ('N-MNIST', None, ALIF_STDExpCu_Dense_Layer,
-         dict(rec_wscale=10., ff_wscale=100., tau_mem=10., kwargs=dict(tau_std=100., tau_syn=10))),
+         dict(rec_wscale=5., ff_wscale=20., tau_mem=10., kwargs=dict(tau_std=100., tau_syn=10))),
         ('N-MNIST', None, ALIF_STPExpCu_Dense_Layer,
-         dict(rec_wscale=6, ff_wscale=100, tau_mem=5, kwargs=dict(tau_syn=5, tau_f=10, tau_d=100, tau_a=100))),
+         dict(rec_wscale=3, ff_wscale=20, tau_mem=5, kwargs=dict(tau_syn=5, tau_f=10, tau_d=100, tau_a=100))),
 
         ('gesture', None, LIF_Delta_Dense_Layer, dict(rec_wscale=0.1, ff_wscale=0.1, tau_mem=10.)),
         ('gesture', None, LIF_ExpCu_Dense_Layer,
-         dict(rec_wscale=4., ff_wscale=20., tau_mem=10., kwargs=dict(tau_syn=10.0))),
+         dict(rec_wscale=0.2, ff_wscale=1., tau_mem=10., kwargs=dict(tau_syn=10.0))),
         ('gesture', None, LIF_STDExpCu_Dense_Layer,
-         dict(rec_wscale=8., ff_wscale=20., tau_mem=10., kwargs=dict(tau_std=200.0, tau_syn=10.0))),
+         dict(rec_wscale=0.2, ff_wscale=1., tau_mem=10., kwargs=dict(tau_std=200.0, tau_syn=10.0))),
         ('gesture', None, LIF_STPExpCu_Dense_Layer,
-         dict(rec_wscale=5., ff_wscale=20., tau_mem=10., kwargs=dict(tau_syn=10, tau_f=10, tau_d=100))),
+         dict(rec_wscale=1., ff_wscale=4., tau_mem=10., kwargs=dict(tau_syn=10, tau_f=10, tau_d=100))),
         ('gesture', None, ALIF_Delta_Dense_Layer, dict(rec_wscale=0.5, ff_wscale=0.5, tau_mem=10.)),
         ('gesture', None, ALIF_ExpCu_Dense_Layer,
-         dict(rec_wscale=10., ff_wscale=20., tau_mem=10., kwargs=dict(tau_syn=10.0, tau_a=100.0))),
+         dict(rec_wscale=1., ff_wscale=5., tau_mem=10., kwargs=dict(tau_syn=10.0, tau_a=100.0))),
         ('gesture', None, ALIF_STDExpCu_Dense_Layer,
-         dict(rec_wscale=10., ff_wscale=30., tau_mem=10., kwargs=dict(tau_std=200., tau_syn=10))),
+         dict(rec_wscale=1., ff_wscale=4., tau_mem=10., kwargs=dict(tau_std=200., tau_syn=10))),
         ('gesture', None, ALIF_STPExpCu_Dense_Layer,
-         dict(rec_wscale=6, ff_wscale=40, tau_mem=5, kwargs=dict(tau_syn=5, tau_f=10, tau_d=100, tau_a=100))),
+         dict(rec_wscale=1, ff_wscale=4, tau_mem=5, kwargs=dict(tau_syn=5, tau_f=10, tau_d=100, tau_a=100))),
 
-        ('SHD', None, LIF_Delta_Dense_Layer, dict(rec_wscale=0.1, ff_wscale=0.1, tau_mem=10.)),
+        ('SHD', None, LIF_Delta_Dense_Layer, dict(rec_wscale=10, ff_wscale=100, tau_mem=10.)),
         ('SHD', None, LIF_ExpCu_Dense_Layer,
-         dict(rec_wscale=4., ff_wscale=20., tau_mem=10., kwargs=dict(tau_syn=10.0))),
+         dict(rec_wscale=0.1, ff_wscale=100., tau_mem=10., kwargs=dict(tau_syn=10.0))),
         ('SHD', None, LIF_STDExpCu_Dense_Layer,
-         dict(rec_wscale=8., ff_wscale=20., tau_mem=10., kwargs=dict(tau_std=200.0, tau_syn=10.0))),
+         dict(rec_wscale=0.2, ff_wscale=1., tau_mem=10., kwargs=dict(tau_std=200.0, tau_syn=10.0))),
         ('SHD', None, LIF_STPExpCu_Dense_Layer,
          dict(rec_wscale=5., ff_wscale=20., tau_mem=10., kwargs=dict(tau_syn=10, tau_f=10, tau_d=100))),
         ('SHD', None, ALIF_Delta_Dense_Layer, dict(rec_wscale=0.5, ff_wscale=0.5, tau_mem=10.)),

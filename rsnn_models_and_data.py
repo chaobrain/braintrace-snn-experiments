@@ -17,9 +17,10 @@
 import os
 from typing import Callable, Dict, Sequence
 
+import brainscale
 import brainstate
-import braintools as bts
-import brainunit as bu
+import braintools
+import brainunit as u
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -28,9 +29,10 @@ import tonic
 from tonic.collation import PadTensors
 from tonic.datasets import SHD, NMNIST, DVSGesture
 from torch.utils.data import DataLoader, IterableDataset
-from tqdm import tqdm
+from torch.utils.data import Dataset
+import h5py
+import torch
 
-import brainscale
 
 
 def cosine_similarity(x, y):
@@ -68,7 +70,7 @@ class _ExpCo_Dense_Layer(brainstate.nn.Module):
             weight = jnp.concat([ff_init([self.n_exc_in, n_rec]), rec_init([self.n_exc_rec, n_rec])], axis=0)
             self.exe_syn = brainstate.nn.AlignPostProj(
                 comm=brainscale.nn.SignedWLinear(self.n_exc_in + self.n_exc_rec, n_rec, w_init=weight),
-                syn=brainscale.nn.Expon.desc(size=n_rec, tau=tau_syn),
+                syn=brainscale.nn.Expon.desc(n_rec, tau=tau_syn, g_initializer=brainstate.init.ZeroInit()),
                 out=brainstate.nn.COBA.desc(E=3.5),
                 post=self.neu
             )
@@ -76,7 +78,7 @@ class _ExpCo_Dense_Layer(brainstate.nn.Module):
             weight = jnp.concat([4 * ff_init([self.n_inh_in, n_rec]), 4 * rec_init([self.n_inh_rec, n_rec])], axis=0)
             self.inh_syn = brainstate.nn.AlignPostProj(
                 comm=brainscale.nn.SignedWLinear(self.n_inh_in + self.n_inh_rec, n_rec, w_init=weight),
-                syn=brainscale.nn.Expon.desc(size=n_rec, tau=tau_syn),
+                syn=brainscale.nn.Expon.desc(n_rec, tau=tau_syn, g_initializer=brainstate.init.ZeroInit()),
                 out=brainstate.nn.COBA.desc(E=-0.5),
                 post=self.neu
             )
@@ -84,21 +86,21 @@ class _ExpCo_Dense_Layer(brainstate.nn.Module):
 
             self.inp_syn = brainstate.nn.AlignPostProj(
                 comm=brainscale.nn.Linear(n_in, n_rec, w_init=ff_init([n_in, n_rec])),
-                syn=brainscale.nn.Expon.desc(size=n_rec, tau=tau_syn),
-                out=brainstate.nn.CUBA.desc(),
+                syn=brainscale.nn.Expon.desc(n_rec, tau=tau_syn, g_initializer=brainstate.init.ZeroInit()),
+                out=brainstate.nn.CUBA.desc(1.),
                 post=self.neu
             )
 
             self.exe_syn = brainstate.nn.AlignPostProj(
                 comm=brainscale.nn.SignedWLinear(self.n_exc_rec, n_rec, w_init=rec_init([self.n_exc_rec, n_rec])),
-                syn=brainscale.nn.Expon.desc(size=n_rec, tau=tau_syn),
+                syn=brainscale.nn.Expon.desc(n_rec, tau=tau_syn, g_initializer=brainstate.init.ZeroInit()),
                 out=brainstate.nn.COBA.desc(E=1.5),
                 post=self.neu
             )
 
             self.inh_syn = brainstate.nn.AlignPostProj(
                 comm=brainscale.nn.SignedWLinear(self.n_inh_rec, n_rec, w_init=4 * rec_init([self.n_inh_rec, n_rec])),
-                syn=brainscale.nn.Expon.desc(size=n_rec, tau=tau_syn),
+                syn=brainscale.nn.Expon.desc(n_rec, tau=tau_syn, g_initializer=brainstate.init.ZeroInit()),
                 out=brainstate.nn.COBA.desc(E=-0.5),
                 post=self.neu
             )
@@ -186,14 +188,14 @@ class LIF_ExpCu_Dense_Layer(brainstate.nn.Module):
         self.syn = brainstate.nn.AlignPostProj(
             comm=brainscale.nn.Linear(n_in + n_rec, n_rec,
                                       jnp.concat([ff_init([n_in, n_rec]), rec_init([n_rec, n_rec])], axis=0)),
-            syn=brainscale.nn.Expon.desc(size=n_rec, tau=tau_syn),
-            out=brainstate.nn.CUBA.desc(),
+            syn=brainscale.nn.Expon.desc(n_rec, tau=tau_syn, g_initializer=brainstate.init.ZeroInit()),
+            out=brainstate.nn.CUBA.desc(1.),
             post=self.neu
         )
 
     def update(self, spk):
         self.syn(jnp.concat([spk, self.neu.get_spike()], axis=-1))
-        self.neu()
+        self.neu(0.)
         return self.neu.get_spike()
 
 
@@ -221,8 +223,8 @@ class LIF_STDExpCu_Dense_Layer(brainstate.nn.Module):
         self.syn = brainstate.nn.AlignPostProj(
             comm=brainscale.nn.Linear(n_in + n_rec, n_rec,
                                       jnp.concat([ff_init([n_in, n_rec]), rec_init([n_rec, n_rec])], axis=0)),
-            syn=brainscale.nn.Expon.desc(size=n_rec, tau=tau_syn),
-            out=brainstate.nn.CUBA.desc(),
+            syn=brainscale.nn.Expon.desc(n_rec, tau=tau_syn, g_initializer=brainstate.init.ZeroInit()),
+            out=brainstate.nn.CUBA.desc(1.),
             post=self.neu
         )
 
@@ -232,7 +234,7 @@ class LIF_STDExpCu_Dense_Layer(brainstate.nn.Module):
         last_spk = self.neu.get_spike()
         inp = jnp.concat([inp_spk, last_spk * self.std(last_spk)], axis=-1)
         self.syn(inp)
-        self.neu()
+        self.neu(0.)
         return self.neu.get_spike()
 
 
@@ -255,10 +257,12 @@ class LIF_STPExpCu_Dense_Layer(brainstate.nn.Module):
             self.stp_inp = brainscale.nn.STP(n_in, tau_f=tau_f, tau_d=tau_d)
 
         self.syn = brainstate.nn.AlignPostProj(
-            comm=brainscale.nn.Linear(n_in + n_rec, n_rec,
-                                      jnp.concat([ff_init([n_in, n_rec]), rec_init([n_rec, n_rec])])),
-            syn=brainscale.nn.Expon.desc(size=n_rec, tau=tau_syn),
-            out=brainstate.nn.CUBA.desc(),
+            comm=brainscale.nn.Linear(
+                n_in + n_rec, n_rec,
+                jnp.concat([ff_init([n_in, n_rec]), rec_init([n_rec, n_rec])])
+            ),
+            syn=brainscale.nn.Expon.desc(n_rec, tau=tau_syn, g_initializer=brainstate.init.ZeroInit()),
+            out=brainstate.nn.CUBA.desc(1.),
             post=self.neu
         )
 
@@ -268,7 +272,7 @@ class LIF_STPExpCu_Dense_Layer(brainstate.nn.Module):
         last_spk = self.neu.get_spike()
         inp = jnp.concat([inp_spk, last_spk * self.stp(last_spk)], axis=-1)
         self.syn(inp)
-        self.neu()
+        self.neu(0.)
         return self.neu.get_spike()
 
 
@@ -294,7 +298,7 @@ class LIF_Delta_Dense_Layer(brainstate.nn.Module):
     def update(self, spk):
         inp = jnp.concat([spk, self.neu.get_spike()], axis=-1)
         self.syn(inp)
-        self.neu()
+        self.neu(0.)
         return self.neu.get_spike()
 
 
@@ -321,7 +325,7 @@ class IF_Delta_Dense_Layer(brainstate.nn.Module):
     def update(self, spk):
         spk = jnp.concat([spk, self.neu.get_spike()], axis=-1)
         self.syn(spk)
-        self.neu()
+        self.neu(0.)
         return self.neu.get_spike()
 
 
@@ -347,14 +351,14 @@ class ALIF_ExpCu_Dense_Layer(brainstate.nn.Module):
         self.syn = brainstate.nn.AlignPostProj(
             comm=brainscale.nn.Linear(n_in + n_rec, n_rec,
                                       jnp.concat([ff_init([n_in, n_rec]), rec_init([n_rec, n_rec])], axis=0)),
-            syn=brainscale.nn.Expon.desc(size=n_rec, tau=tau_syn),
-            out=brainstate.nn.CUBA.desc(),
+            syn=brainscale.nn.Expon.desc(n_rec, tau=tau_syn, g_initializer=brainstate.init.ZeroInit()),
+            out=brainstate.nn.CUBA.desc(1.),
             post=self.neu
         )
 
     def update(self, spk):
         self.syn(jnp.concat([spk, self.neu.get_spike()], axis=-1))
-        self.neu()
+        self.neu(0.)
         return self.neu.get_spike()
 
 
@@ -390,7 +394,7 @@ class ALIF_Delta_Dense_Layer(brainstate.nn.Module):
     def update(self, spk):
         inp = jnp.concat([spk, self.neu.get_spike()], axis=-1)
         self.syn(inp)
-        self.neu()
+        self.neu(0.)
         return self.neu.get_spike()
 
 
@@ -408,7 +412,8 @@ class ALIF_STDExpCu_Dense_Layer(brainstate.nn.Module):
     ):
         super().__init__()
         self.neu = brainscale.nn.ALIF(
-            n_rec, tau=tau_mem, spk_fun=spk_fun, spk_reset=spk_reset, V_th=V_th, beta=beta,
+            n_rec, tau=tau_mem, tau_a=100., spk_fun=spk_fun,
+            spk_reset=spk_reset, V_th=V_th, beta=beta,
             R=1., V_reset=0., V_rest=0.,
             V_initializer=brainstate.init.ZeroInit(),
             a_initializer=brainstate.init.ZeroInit(),
@@ -424,8 +429,8 @@ class ALIF_STDExpCu_Dense_Layer(brainstate.nn.Module):
                 n_in + n_rec, n_rec,
                 jnp.concat([ff_init([n_in, n_rec]), rec_init([n_rec, n_rec])], axis=0)
             ),
-            syn=brainscale.nn.Expon.desc(size=n_rec, tau=tau_syn),
-            out=brainstate.nn.CUBA.desc(),
+            syn=brainscale.nn.Expon.desc(n_rec, tau=tau_syn, g_initializer=brainstate.init.ZeroInit()),
+            out=brainstate.nn.CUBA.desc(1.),
             post=self.neu
         )
 
@@ -435,7 +440,7 @@ class ALIF_STDExpCu_Dense_Layer(brainstate.nn.Module):
         last_spk = self.neu.get_spike()
         inp = jnp.concat([inp_spk, last_spk * self.std(last_spk)], axis=-1)
         self.syn(inp)
-        self.neu()
+        self.neu(0.)
         return self.neu.get_spike()
 
 
@@ -464,8 +469,8 @@ class ALIF_STPExpCu_Dense_Layer(brainstate.nn.Module):
         self.syn = brainstate.nn.AlignPostProj(
             comm=brainscale.nn.Linear(n_in + n_rec, n_rec,
                                       jnp.concat([ff_init([n_in, n_rec]), rec_init([n_rec, n_rec])])),
-            syn=brainscale.nn.Expon.desc(size=n_rec, tau=tau_syn),
-            out=brainstate.nn.CUBA.desc(),
+            syn=brainscale.nn.Expon.desc(n_rec, tau=tau_syn, g_initializer=brainstate.init.ZeroInit()),
+            out=brainstate.nn.CUBA.desc(1.),
             post=self.neu
         )
 
@@ -475,19 +480,19 @@ class ALIF_STPExpCu_Dense_Layer(brainstate.nn.Module):
         last_spk = self.neu.get_spike()
         inp = jnp.concat([inp_spk, last_spk * self.stp(last_spk)], axis=-1)
         self.syn(inp)
-        self.neu()
+        self.neu(0.)
         return self.neu.get_spike()
 
 
 class NetWithMemSpkRegularize(brainstate.nn.Module):
     """
     The class for the RTRL-based network.
-  
+
     This class implements the bash function for the following regularization:
-  
+
     - membrane_reg: regularize the membrane potential of the neurons.
     - spike_reg: regularize the firing rate of the neurons.
-  
+
     """
 
     def membrane_reg(self, mem_low: float, mem_high: float, factor: float = 0.):
@@ -658,11 +663,11 @@ class visualize(object):
 
         for idx in np.arange(0, inp_s.shape[1], max(int(inp_s.shape[1] // num_vis), 1)):
             i = 0
-            fig, gs = bts.visualize.get_figure(n_row, n_col, 3, 4.5)
+            fig, gs = braintools.visualize.get_figure(n_row, n_col, 3, 4.5)
 
             # input spikes
             fig.add_subplot(visualize.get_gs(gs, i, n_col))
-            spk = bu.math.as_numpy(inp_s[:, idx])
+            spk = u.math.as_numpy(inp_s[:, idx])
             event_times, event_ids = np.where(spk)
             plt.scatter(x=event_times * brainstate.environ.get_dt(), y=event_ids, s=0.5)
             plt.xlim(-1, (inp_s.shape[0] + 1) * brainstate.environ.get_dt())
@@ -674,7 +679,7 @@ class visualize(object):
             # hidden spikes
             for j in range(n_layer):
                 fig.add_subplot(visualize.get_gs(gs, i, n_col))
-                spk = bu.math.as_numpy(hid_s[j][:, idx])
+                spk = u.math.as_numpy(hid_s[j][:, idx])
                 event_times, event_ids = np.where(spk)
                 plt.scatter(x=event_times * brainstate.environ.get_dt(), y=event_ids, s=0.5)
                 plt.xlim(-1, (hid_s[j].shape[0] + 1) * brainstate.environ.get_dt())
@@ -686,7 +691,7 @@ class visualize(object):
             # recurrent membrane potentials
             for j in range(n_layer):
                 fig.add_subplot(visualize.get_gs(gs, i, n_col))
-                plt.plot(times, bu.math.as_numpy(hid_v[j][:, idx]))
+                plt.plot(times, u.math.as_numpy(hid_v[j][:, idx]))
                 plt.xlim(-1, (hid_v[j].shape[0] + 1) * brainstate.environ.get_dt())
                 plt.title(f'Rec Layer {j} Potentials')
                 plt.xlabel('Time [ms]')
@@ -695,7 +700,7 @@ class visualize(object):
             if out_v is not None:
                 # output membrane potentials
                 fig.add_subplot(visualize.get_gs(gs, i, n_col))
-                plt.plot(times, bu.math.as_numpy(out_v[:, idx]))
+                plt.plot(times, u.math.as_numpy(out_v[:, idx]))
                 plt.xlim(-1, (out_v.shape[0] + 1) * brainstate.environ.get_dt())
                 plt.title('Output Activities')
                 plt.xlabel('Time [ms]')
@@ -715,6 +720,66 @@ def _label_processing(y_local):
         y_local = y_local[:, 0].max(1)[1]
     return jnp.asarray(y_local, dtype=brainstate.environ.ditype())  # (batch,)
 
+class SpikingDataset(Dataset):
+    """
+    Dataset class for the Spiking Heidelberg Digits (SHD) or
+    Spiking Speech Commands (SSC) dataset.
+
+    Arguments
+    ---------
+    dataset_name : str
+        Name of the dataset, either shd or ssc.
+    data_folder : str
+        Path to folder containing the dataset (h5py file).
+    split : str
+        Split of the SHD dataset, must be either "train" or "test".
+    nb_steps : int
+        Number of time steps for the generated spike trains.
+    """
+
+    def __init__(
+        self,
+        dataset_name: str,
+        data_folder: str,
+        split: str,
+        nb_steps: int = 100,
+    ):
+        # Fixed parameters
+        self.device = "cpu"  # to allow pin memory
+        self.nb_steps = nb_steps
+        self.nb_units = 700
+        self.max_time = 1.4
+        self.time_bins = np.linspace(0, self.max_time, num=self.nb_steps)
+
+        # Read data from h5py file
+        filename = f"{data_folder}/{dataset_name}_{split}.h5"
+        self.h5py_file = h5py.File(filename, "r")
+        self.firing_times = self.h5py_file["spikes"]["times"]
+        self.units_fired = self.h5py_file["spikes"]["units"]
+        self.labels = np.array(self.h5py_file["labels"], dtype=np.int_)
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, index):
+        times = np.digitize(self.firing_times[index], self.time_bins)
+        units = self.units_fired[index]
+
+        x_idx = torch.LongTensor(np.array([times, units])).to(self.device)
+        x_val = torch.FloatTensor(np.ones(len(times))).to(self.device)
+        x_size = torch.Size([self.nb_steps, self.nb_units])
+
+        x = torch.sparse_coo_tensor(x_idx, x_val, x_size).to(self.device)
+        y = self.labels[index]
+
+        return x.to_dense(), y
+
+    def generate_batch(self, batch):
+        xs, ys = zip(*batch)
+        xs = torch.nn.utils.rnn.pad_sequence(xs, batch_first=False)
+        ys = torch.LongTensor(ys).to(self.device)
+        return xs, ys
+
 
 def _get_shd_data(args, cache_dir=os.path.expanduser("./data"), ):
     # The Spiking Heidelberg Digits (SHD) dataset consists of 20 classes of spoken digits (0-9) spoken by 50 speakers.
@@ -723,6 +788,40 @@ def _get_shd_data(args, cache_dir=os.path.expanduser("./data"), ):
     # artificial model of the inner ear and parts of the ascending auditory pathway. The SHD dataset has 8,156
     # training and 2,264 test samples. A full description of the dataset and how it was created can be found
     # in the paper below. Please cite this paper if you make use of the dataset.
+
+    data_length = 300
+
+    train_dataset = SpikingDataset('shd', './data/SHD', 'train', data_length)
+    test_dataset = SpikingDataset('shd', './data/SHD', 'test', data_length)
+
+    in_shape = SHD.sensor_size
+    out_shape = 20
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        collate_fn=train_dataset.generate_batch,
+        shuffle=True,
+    )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=args.batch_size,
+        collate_fn=train_dataset.generate_batch,
+        shuffle=False,
+    )
+    return brainstate.util.DotDict(
+        {
+            'train_loader': train_loader,
+            'test_loader': test_loader,
+            'in_shape': in_shape,
+            'out_shape': out_shape,
+            'label_process': _label_processing,
+            'input_process': _sequence_data_for_mlp,
+        }
+    )
+
+
+
 
     in_shape = SHD.sensor_size
     out_shape = 20
@@ -763,152 +862,29 @@ def _sequence_data_for_mlp(x_local):
     return jnp.asarray(x_local, dtype=brainstate.environ.dftype())
 
 
-def _to_index(xs):
-    xs = np.asarray(xs)
-    res = []
-    for x in xs:
-        res.append(tuple([np.asarray(i, dtype=np.int16) for i in np.where(np.asarray(x))]))
-    return res
-
-
-def _dvs_gesture_preprocessing(num_workers: int, n_step: int = 100):
-    batch_size = 128
-    cache_dir = os.path.expanduser("../data")
-    in_shape = DVSGesture.sensor_size
-
-    transform = tonic.transforms.Compose(
-        [
-            tonic.transforms.ToFrame(sensor_size=in_shape, n_time_bins=n_step),
-            # transforms.Downsample(time_factor=0.5),
-            # transforms.DropEvent(p=0.001),
-        ]
-    )
-    train_set = DVSGesture(save_to=cache_dir, train=True, transform=transform)
-    test_set = DVSGesture(save_to=cache_dir, train=False, transform=transform)
-    train_loader = DataLoader(
-        train_set,
-        shuffle=False,
-        batch_size=batch_size,
-        collate_fn=PadTensors(batch_first=True),
-        num_workers=num_workers
-    )
-    test_loader = DataLoader(
-        test_set,
-        shuffle=False,
-        batch_size=batch_size,
-        collate_fn=PadTensors(batch_first=True),
-        num_workers=num_workers
-    )
-
-    for loader, name in [(train_loader, os.path.join(cache_dir, f'DVSGesture/DVSGesture-train-step={n_step}')),
-                         (test_loader, os.path.join(cache_dir, f'DVSGesture/DVSGesture-test-step={n_step}'))]:
-        xs, ys = [], []
-        for i, (x, y) in tqdm(enumerate(loader), total=len(loader), desc='preprocessing'):
-            xs.extend(_to_index(x))
-            ys.append(np.asarray(y))
-        size = x.shape[1:]
-        xs = np.asarray(xs, dtype=object)
-        ys = np.concatenate(ys)
-        np.savez(f"{name}.npz", xs=xs, ys=ys, size=np.asarray(size, dtype=np.int32))
-
-
-# class FormattedDVSGesture:
-#   def __init__(self, filepath: str):
-#     self.filepath = filepath
-#     data = np.load(filepath, allow_pickle=True)
-#     self.xs = data['xs']
-#     self.ys = data['ys']
-#     self.size = data['size']
-#
-#   def __getitem__(self, idx):
-#     arr = np.zeros(tuple(self.size), dtype=brainstate.environ.dftype())
-#     arr[*self.xs[idx]] = 1.
-#     y = self.ys[idx]
-#     return arr, y
-#
-#   def __len__(self):
-#     return len(self.ys)
-
-class FormattedDVSGesture:
-    def __init__(self, filepath: str):
-        self.filepath = filepath
-        data = np.load(filepath, allow_pickle=True)
-        self.xs = data['xs']
-        self.ys = data['ys']
-        self.img_size = data['img_size']
-
-    def __getitem__(self, idx):
-        arr = np.zeros(tuple(self.img_size), dtype=brainstate.environ.dftype())
-        indices = self.xs[idx]
-        time_indices = indices[:, 0]
-        neuron_indices = indices[:, 1]
-        arr[time_indices, neuron_indices] = 1.
-        y = self.ys[idx]
-        return arr, y
-
-    def __len__(self):
-        return len(self.ys)
-
-
 def _get_gesture_data(args, cache_dir):
     # The Dynamic Vision Sensor (DVS) Gesture (DVSGesture) dataset consists of 11 classes of hand gestures recorded
     # by a DVS sensor. The DVSGesture dataset is a spiking version of the MNIST dataset. The dataset consists of
     # 60k training and 10k test samples.
 
-    in_shape = DVSGesture.sensor_size
     out_shape = 11
     n_step = args.data_length
-    train_path = os.path.join(cache_dir, f"DVSGesture/DVSGesture-mlp-train-step={n_step}.npz")
-    test_path = os.path.join(cache_dir, f"DVSGesture/DVSGesture-mlp-test-step={n_step}.npz")
-    if not os.path.exists(train_path) or not os.path.exists(test_path):
-        _dvs_gesture_preprocessing(args.n_data_worker, n_step)
-    else:
-        print('Used cache files for DVSGesture.')
-    train_set = FormattedDVSGesture(train_path)
-    test_set = FormattedDVSGesture(test_path)
+    in_shape = DVSGesture.sensor_size
+    transform = tonic.transforms.ToFrame(sensor_size=in_shape, n_time_bins=n_step)
+    train_set = DVSGesture(save_to=cache_dir, train=True, transform=transform)
+    test_set = DVSGesture(save_to=cache_dir, train=False, transform=transform)
     train_loader = DataLoader(
         train_set,
-        shuffle=args.shuffle,
+        shuffle=False,
         batch_size=args.batch_size,
         collate_fn=PadTensors(batch_first=False),
-        num_workers=args.n_data_worker,
-        drop_last=args.drop_last,
     )
     test_loader = DataLoader(
         test_set,
         shuffle=False,
         batch_size=args.batch_size,
         collate_fn=PadTensors(batch_first=False),
-        num_workers=args.n_data_worker
     )
-
-    # # method 1
-    # train_set = DVSGesture(save_to=cache_dir, train=True)
-    # test_set = DVSGesture(save_to=cache_dir, train=False)
-    # transform = transforms.ToFrame(sensor_size=in_size, time_window=brainstate.environ.get_dt() * 1000)
-    # slicer = SliceByTime(time_window=100000)
-    # train_set = SlicedDataset(train_set, slicer=slicer, transform=transform,
-    #                           metadata_path=os.path.join(cache_dir, "metadata/DVSGesture/train"))
-    # test_set = SlicedDataset(test_set, slicer=slicer, transform=transform,
-    #                          metadata_path=os.path.join(cache_dir, "metadata/DVSGesture/test"))
-    # train_loader = DataLoader(train_set, shuffle=True, batch_size=batch_size,
-    #                           collate_fn=PadTensors(batch_first=False), num_workers=min(20, max_cpu_count))
-    # test_loader = DataLoader(test_set, shuffle=False, batch_size=batch_size,
-    #                          collate_fn=PadTensors(batch_first=False), num_workers=min(20, max_cpu_count))
-
-    # # method 2
-    # transform = transforms.Compose(
-    #   [transforms.ToFrame(sensor_size=in_size, n_time_bins=400),
-    #    # transforms.Downsample(time_factor=0.5),
-    #    # transforms.DropEvent(p=0.001),
-    #    ]
-    # )
-    # train_set = DVSGesture(save_to=cache_dir, train=True, transform=transform)
-    # test_set = DVSGesture(save_to=cache_dir, train=False, transform=transform)
-    # train_loader = DataLoader(train_set, shuffle=True, batch_size=batch_size, collate_fn=PadTensors(batch_first=False),
-    #                           num_workers=min(20, max_cpu_count))
-    # test_loader = DataLoader(test_set, shuffle=False, batch_size=batch_size, collate_fn=PadTensors(batch_first=False),
-    #                          num_workers=min(20, max_cpu_count))
 
     return brainstate.util.DotDict(
         {

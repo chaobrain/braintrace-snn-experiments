@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import brainscale
-from bst_utils import raster_plot
+from general_utils import raster_plot
 
 
 class GIF(brainstate.nn.Neuron):

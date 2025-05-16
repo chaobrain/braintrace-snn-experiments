@@ -91,12 +91,6 @@ from torch.utils.data import DataLoader
 
 PyTree = Any
 
-diag_norm_mapping = {
-    0: None,
-    1: True,
-    2: False
-}
-
 
 def _format_sim_epoch(sim: Union[int, float], length: int):
     if 0. <= sim < 1.:
@@ -170,7 +164,7 @@ class _LIF_Delta_Dense_Layer(brainstate.nn.Module):
         ff_scale: float = 1.,
     ):
         super().__init__()
-        self.neu = brainscale.LIF(n_rec, tau=tau_mem, spk_fun=spk_fun, spk_reset=spk_reset, V_th=V_th)
+        self.neu = brainscale.nn. LIF(n_rec, tau=tau_mem, spk_fun=spk_fun, spk_reset=spk_reset, V_th=V_th)
         rec_init: Callable = brainstate.init.KaimingNormal(rec_scale)
         ff_init: Callable = brainstate.init.KaimingNormal(ff_scale)
         w_init = jnp.concat([ff_init([n_in, n_rec]), rec_init([n_rec, n_rec])], axis=0)
@@ -547,7 +541,7 @@ class Trainer(object):
 
     def memory_efficient_etrace_functions(self, input_info):
         # initialize the states
-        brainstate.init_states(self.target, self.args.batch_size)
+        brainstate.nn.init_all_states(self.target, self.args.batch_size)
         # weights
         weights = self.target.states().subset(brainstate.ParamState)
 

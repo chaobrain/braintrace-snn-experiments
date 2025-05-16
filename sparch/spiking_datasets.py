@@ -16,9 +16,16 @@ import os
 import brainstate
 import h5py
 import numpy as np
+import tonic
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
+from torchvision.transforms import (
+    RandomPerspective,
+    RandomResizedCrop,
+    RandomRotation,
+    InterpolationMode,
+)
 
 __all__ = [
     'load_dataset',
@@ -82,11 +89,49 @@ class SpikingDataset(Dataset):
     def generate_batch(self, batch):
         xs, ys = zip(*batch)
         xs = torch.nn.utils.rnn.pad_sequence(xs, batch_first=True)
-        xlens = torch.tensor([x.shape[0] for x in xs])
         ys = torch.LongTensor(ys).to(self.device)
 
+        # xlens = torch.tensor([x.shape[0] for x in xs])
         # return xs, xlens, ys
         return xs, ys
+
+
+class FormattedDataset:
+    def __init__(self, filepath: str):
+        self.filepath = filepath
+        data = np.load(filepath, allow_pickle=True)
+        self.xs_row = data['xs_row']
+        self.xs_col = data['xs_col']
+        self.xs_data = data['xs_data']
+        self.ys = data['ys']
+        img_size = data['img_size']
+        self.img_size = (int(img_size[0]), int(np.prod(img_size[1:])))
+
+    def load(self, idx):
+        arr = np.zeros(self.img_size, dtype=np.float32)
+        row = self.xs_row[idx]
+        col = self.xs_col[idx]
+        arr[row, col] = self.xs_data[idx]
+        return arr
+
+    def __getitem__(self, idx):
+        arr = self.load(idx)
+        y = self.ys[idx]
+        return arr, y
+
+    def __len__(self):
+        return len(self.ys)
+
+
+# We need to stack the batch elements
+def _numpy_collate(batch):
+    if isinstance(batch[0], np.ndarray):
+        return np.stack(batch)
+    elif isinstance(batch[0], (tuple, list)):
+        transposed = zip(*batch)
+        return [_numpy_collate(samples) for samples in transposed]
+    else:
+        return np.array(batch)
 
 
 def load_nmnist_data(args, first_saccade_only=True):
@@ -107,7 +152,7 @@ def load_nmnist_data(args, first_saccade_only=True):
         train_set,
         shuffle=True,
         batch_size=args.batch_size,
-        collate_fn=numpy_collate,
+        collate_fn=_numpy_collate,
         num_workers=args.num_workers,
         drop_last=False,
     )
@@ -115,8 +160,56 @@ def load_nmnist_data(args, first_saccade_only=True):
         test_set,
         shuffle=False,
         batch_size=args.batch_size,
-        collate_fn=numpy_collate,
+        collate_fn=_numpy_collate,
         num_workers=args.num_workers,
+    )
+
+    return brainstate.util.DotDict(
+        {
+            'train_loader': train_loader,
+            'test_loader': test_loader,
+            'in_shape': int(np.prod(in_shape)),
+            'out_shape': out_shape,
+        }
+    )
+
+
+def load_nmnist_data_v2(args, first_saccade_only=True):
+    in_shape = int(np.prod((34, 34, 2)))
+    out_shape = 10
+    n_step = args.data_length
+    cache_dir = args.data_folder
+    train_path = os.path.join(cache_dir, f"NMNIST/NMNIST-train-step={n_step}.npz")
+    train_path = os.path.abspath(train_path)
+    test_path = os.path.join(cache_dir, f"NMNIST/NMNIST-test-step={n_step}.npz")
+    test_path = os.path.abspath(test_path)
+    if not os.path.exists(train_path) or not os.path.exists(test_path):
+        raise ValueError(
+            f'Cache files {train_path} and {test_path} do not exist. '
+            f'please run "dvs-gesture-preprocessing.py" first.'
+        )
+    else:
+        print(f'Used cache files {train_path} and {test_path}.')
+    train_set = FormattedDataset(train_path)
+    test_set = FormattedDataset(test_path)
+
+    if args.use_augm:
+        pass
+
+    train_loader = DataLoader(
+        train_set,
+        shuffle=True,
+        batch_size=args.batch_size,
+        collate_fn=_numpy_collate,
+        num_workers=args.num_workers,
+        drop_last=False,
+    )
+    test_loader = DataLoader(
+        test_set,
+        shuffle=False,
+        batch_size=args.batch_size,
+        collate_fn=_numpy_collate,
+        num_workers=args.num_workers
     )
 
     return brainstate.util.DotDict(
@@ -139,7 +232,6 @@ def load_shd_data(args):
         collate_fn=train_dataset.generate_batch,
         shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=True,
     )
     test_loader = DataLoader(
         test_dataset,
@@ -147,7 +239,6 @@ def load_shd_data(args):
         collate_fn=train_dataset.generate_batch,
         shuffle=False,
         num_workers=args.num_workers,
-        pin_memory=True,
     )
     return brainstate.util.DotDict(
         {
@@ -190,44 +281,6 @@ def load_ssc_data(args):
     )
 
 
-# We need to stack the batch elements
-def numpy_collate(batch):
-    if isinstance(batch[0], np.ndarray):
-        return np.stack(batch)
-    elif isinstance(batch[0], (tuple, list)):
-        transposed = zip(*batch)
-        return [numpy_collate(samples) for samples in transposed]
-    else:
-        return np.array(batch)
-
-
-class FormattedDVSGesture:
-    def __init__(self, filepath: str):
-        self.filepath = filepath
-        data = np.load(filepath, allow_pickle=True)
-        self.xs_row = data['xs_row']
-        self.xs_col = data['xs_col']
-        self.xs_data = data['xs_data']
-        self.ys = data['ys']
-        img_size = data['img_size']
-        self.img_size = (int(img_size[0]), int(np.prod(img_size[1:])))
-
-    def load(self, idx):
-        arr = np.zeros(self.img_size, dtype=np.float32)
-        row = self.xs_row[idx]
-        col = self.xs_col[idx]
-        arr[row, col] = self.xs_data[idx]
-        return arr
-
-    def __getitem__(self, idx):
-        arr = self.load(idx)
-        y = self.ys[idx]
-        return arr, y
-
-    def __len__(self):
-        return len(self.ys)
-
-
 def load_gesture_data(args):
     # The Dynamic Vision Sensor (DVS) Gesture (DVSGesture) dataset consists of 11 classes of hand gestures recorded
     # by a DVS sensor. The DVSGesture dataset is a spiking version of the MNIST dataset. The dataset consists of
@@ -248,8 +301,8 @@ def load_gesture_data(args):
         )
     else:
         print(f'Used cache files {train_path} and {test_path}.')
-    train_set = FormattedDVSGesture(train_path)
-    test_set = FormattedDVSGesture(test_path)
+    train_set = FormattedDataset(train_path)
+    test_set = FormattedDataset(test_path)
 
     if args.use_augm:
         pass
@@ -258,7 +311,7 @@ def load_gesture_data(args):
         train_set,
         shuffle=True,
         batch_size=args.batch_size,
-        collate_fn=numpy_collate,
+        collate_fn=_numpy_collate,
         num_workers=args.num_workers,
         drop_last=False,
     )
@@ -266,8 +319,101 @@ def load_gesture_data(args):
         test_set,
         shuffle=False,
         batch_size=args.batch_size,
-        collate_fn=numpy_collate,
+        collate_fn=_numpy_collate,
         num_workers=args.num_workers
+    )
+
+    return brainstate.util.DotDict(
+        {
+            'train_loader': train_loader,
+            'test_loader': test_loader,
+            'in_shape': in_shape,
+            'out_shape': out_shape,
+            'input_process': lambda x: x,
+        }
+    )
+
+
+class FormattedDVSGestureV2:
+    def __init__(self, filepath: str, aug: bool = False):
+        self.filepath = filepath
+        data = np.load(filepath, allow_pickle=True)
+        self.xs_row = data['xs_row']
+        self.xs_col = data['xs_col']
+        self.xs_data = data['xs_data']
+        self.ys = data['ys']
+        img_size = data['img_size']
+        self.img_size = (int(img_size[0]), int(np.prod(img_size[1:])))
+        self.aug = aug
+        self.transform = tonic.transforms.Compose(
+            [
+                torch.tensor,
+                RandomResizedCrop(
+                    tonic.datasets.DVSGesture.sensor_size[:-1],
+                    scale=(0.6, 1.0),
+                    interpolation=InterpolationMode.NEAREST
+                ),
+                RandomPerspective(),
+                RandomRotation(25),
+            ]
+        )
+
+    def load(self, idx):
+        arr = np.zeros(self.img_size, dtype=np.float32)
+        row = self.xs_row[idx]
+        col = self.xs_col[idx]
+        arr[row, col] = self.xs_data[idx]
+        if self.aug:
+            arr = arr.reshape(arr.shape[0], *tonic.datasets.DVSGesture.sensor_size)
+            arr = np.transpose(arr, axes=(0, 3, 1, 2))
+            arr = self.transform(arr)
+            return np.asarray(arr).reshape([arr.shape[0], -1])
+        else:
+            return arr
+
+    def __getitem__(self, idx):
+        arr = self.load(idx)
+        y = self.ys[idx]
+        return arr, y
+
+    def __len__(self):
+        return len(self.ys)
+
+
+def load_gesture_data_v2(args):
+    in_shape = int(np.prod((128, 128, 2)))
+    out_shape = 11
+    n_step = args.data_length
+    cache_dir = args.data_folder
+    train_path = os.path.join(cache_dir, f"DVSGesture/DVSGesture-V2-train-step={n_step}.npz")
+    train_path = os.path.abspath(train_path)
+    test_path = os.path.join(cache_dir, f"DVSGesture/DVSGesture-V2-test-step={n_step}.npz")
+    test_path = os.path.abspath(test_path)
+    if not os.path.exists(train_path) or not os.path.exists(test_path):
+        raise ValueError(
+            f'Cache files {train_path} and {test_path} do not exist. '
+            f'please run "dvs-gesture-preprocessing.py" first.'
+        )
+    else:
+        print(f'Used cache files {train_path} and {test_path}.')
+    train_set = FormattedDVSGestureV2(train_path, aug=args.use_augm)
+    test_set = FormattedDVSGestureV2(test_path, aug=False)
+
+    train_loader = DataLoader(
+        train_set,
+        shuffle=True,
+        batch_size=args.batch_size,
+        collate_fn=_numpy_collate,
+        num_workers=args.num_workers,
+        drop_last=False,
+    )
+    test_loader = DataLoader(
+        test_set,
+        shuffle=False,
+        batch_size=args.batch_size,
+        collate_fn=_numpy_collate,
+        num_workers=args.num_workers,
+        drop_last=False,
     )
 
     return brainstate.util.DotDict(
@@ -284,11 +430,15 @@ def load_gesture_data(args):
 def load_dataset(args):
     if args.dataset_name == 'nmnist':
         return load_nmnist_data(args)
+    elif args.dataset_name == 'nmnistv2':
+        return load_nmnist_data_v2(args)
     elif args.dataset_name == 'shd':
         return load_shd_data(args)
     elif args.dataset_name == 'ssc':
         return load_ssc_data(args)
     elif args.dataset_name == 'gesture':
         return load_gesture_data(args)
+    elif args.dataset_name == 'gesturev2':
+        return load_gesture_data_v2(args)
     else:
         raise ValueError(f'Unknown dataset name: {args.dataset_name}')

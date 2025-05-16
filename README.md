@@ -104,7 +104,7 @@ Firstly, we should preprocess the dataset using the following command:
 
 
 ```bash
-python dvs-gesture-preprocessing.py
+python data-preprocessing.py
 ```
 
 Training based on BPTT:

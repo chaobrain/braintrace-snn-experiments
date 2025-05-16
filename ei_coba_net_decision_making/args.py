@@ -21,7 +21,7 @@ import sys
 import numpy as np
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
-from bst_utils import MyArgumentParser
+from general_utils import MyArgumentParser
 
 
 def parse_args():

@@ -42,16 +42,11 @@ def _set_gpu_device(device_ids):
     os.environ['CUDA_VISIBLE_DEVICES'] = device_ids
 
 
-def define_device_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--devices', type=str, default='0', help='The GPU device ids.')
-    args, _ = parser.parse_known_args()
-    _set_gpu_device(args.devices)
-    _set_gpu_preallocation(0.99)
-    return args
-
-
-define_device_args()
+_parser = argparse.ArgumentParser()
+_parser.add_argument('--devices', type=str, default='0', help='The GPU device ids.')
+_args, _ = _parser.parse_known_args()
+_set_gpu_device(_args.devices)
+_set_gpu_preallocation(0.99)
 
 import os.path
 import pickle
@@ -63,13 +58,13 @@ if platform.system() == 'Linux':
 
 import jax
 from fast_histogram import histogram1d
-
-# from brainscale._etrace_algorithms import DiagTruncatedAlgorithm
-import brainstate as bst
-import jax.numpy as jnp
+import brainscale
+import brainstate
+import braintools
 import numpy as np
+import jax.numpy as jnp
+from scipy import stats
 import matplotlib.pyplot as plt
-import braintools as bts
 
 from rsnn_models_and_data import (
     LIF_STPExpCu_Dense_Layer,
@@ -83,10 +78,9 @@ from rsnn_models_and_data import (
     get_snn_data,
     cosine_similarity,
 )
-from scipy import stats
 
 
-def compute_confidence_interval(data, confidence=0.95):
+def _compute_confidence_interval(data, confidence=0.95):
     n_seq, n_batch = data.shape
 
     # Calculate the mean along the sequence dimension
@@ -112,6 +106,17 @@ def _compute_cosine_similarity(left, rights, num: int):
     return cosines
 
 
+class Model(brainstate.nn.Module):
+    def __init__(self, module):
+        super().__init__()
+
+        self.module = module
+
+    def update(self, i, inp):
+        with brainstate.environ.context(i=i, t=brainstate.environ.get_dt() * i, fit=True):
+            return self.module(inp)
+
+
 def _compare(
     dataloader,
     num_in: int,
@@ -120,29 +125,26 @@ def _compare(
     tau_mem: float = 10.,
     ff_wscale: float = 4.,
     rec_wscale: float = 4.,
-    spk_fun=bst.surrogate.ReluGrad(),
+    spk_fun=brainstate.surrogate.ReluGrad(),
     # spk_fun=lambda x: jax.lax.stop_gradient(brainstate.surrogate.relu_grad(x)),
     kwargs: dict = None,
     num_data=16,
 ):
-    @bst.compile.jit
+    @brainstate.compile.jit
     def _run_the_model(inputs):
-        model = model_cls(
-            n_in=num_in,
-            n_rec=num_rec,
-            ff_init=bst.init.KaimingNormal(scale=ff_wscale),
-            rec_init=bst.init.KaimingNormal(scale=rec_wscale),
-            spk_fun=spk_fun,
-            tau_mem=tau_mem,
-            **(kwargs or {})
+        model = Model(
+            model_cls(
+                n_in=num_in,
+                n_rec=num_rec,
+                ff_init=brainstate.init.KaimingNormal(scale=ff_wscale),
+                rec_init=brainstate.init.KaimingNormal(scale=rec_wscale),
+                spk_fun=spk_fun,
+                tau_mem=tau_mem,
+                **(kwargs or {})
+            )
         )
-        bst.init_states(model, inputs.shape[1])
-
-        def _model_to_run(ri, inp):
-            with bst.environ.context(i=ri, t=bst.environ.get_dt() * ri, fit=True):
-                return model(inp)
-
-        etrace_model = DiagTruncatedAlgorithm(_model_to_run, n_truncation=inputs.shape[0])
+        brainstate.nn.init_all_states(model, inputs.shape[1])
+        etrace_model = brainscale.DiagTruncatedAlgorithm(model, n_truncation=inputs.shape[0])
         etrace_model.compile_graph(0, inputs[0])
 
         def _step_to_run(ri, inp):
@@ -156,7 +158,7 @@ def _compare(
             return _compute_cosine_similarity(xs[0], dfs, ri + 1)
 
         indices = np.arange(inputs.shape[0])
-        cosines = bst.compile.for_loop(_step_to_run, indices, inputs)
+        cosines = brainstate.compile.for_loop(_step_to_run, indices, inputs)
         etrace_xs = [a.value for a in etrace_model.etrace_xs.values()]
         etrace_dfs = {
             etrace_model.graph.hidden_outvar_to_hidden[k[1]].name: v.value
@@ -171,10 +173,10 @@ def _compare(
         if i_data >= num_data:
             break
         i_data += 1
-        xs = jnp.reshape(jnp.asarray(xs, dtype=bst.environ.dftype()), xs.shape[:2] + (-1,))
+        xs = jnp.reshape(jnp.asarray(xs, dtype=brainstate.environ.dftype()), xs.shape[:2] + (-1,))
         res = _run_the_model(xs)
         final_results.append(res)
-    final_results = bts.tree.concat(final_results, axis=1)
+    final_results = braintools.tree.concat(final_results, axis=1)
     return final_results
 
 
@@ -182,7 +184,7 @@ def compare_jacobian_approx_on_real_dataset(fn='analysis/jac_cosine_sim_theorem3
     if not os.path.exists(fn):
         os.makedirs(fn)
 
-    bst.environ.set(dt=1.0, mode=bst.mixin.JointMode(bst.mixin.Training(), bst.mixin.Batching()))
+    brainstate.environ.set(dt=1.0)
     n_rec = 100
 
     final_results = dict()
@@ -219,9 +221,8 @@ def compare_jacobian_approx_on_real_dataset(fn='analysis/jac_cosine_sim_theorem3
          dict(rec_wscale=6, ff_wscale=40, tau_mem=5, kwargs=dict(tau_syn=5, tau_f=10, tau_d=100, tau_a=100))),
 
         ('SHD', None, LIF_Delta_Dense_Layer, dict(rec_wscale=0.1, ff_wscale=0.1, tau_mem=10.)),
-        (
-            'SHD', None, LIF_ExpCu_Dense_Layer,
-            dict(rec_wscale=4., ff_wscale=20., tau_mem=10., kwargs=dict(tau_syn=10.0))),
+        ('SHD', None, LIF_ExpCu_Dense_Layer,
+         dict(rec_wscale=4., ff_wscale=20., tau_mem=10., kwargs=dict(tau_syn=10.0))),
         ('SHD', None, LIF_STDExpCu_Dense_Layer,
          dict(rec_wscale=8., ff_wscale=20., tau_mem=10., kwargs=dict(tau_std=200.0, tau_syn=10.0))),
         ('SHD', None, LIF_STPExpCu_Dense_Layer,
@@ -244,9 +245,9 @@ def compare_jacobian_approx_on_real_dataset(fn='analysis/jac_cosine_sim_theorem3
             datalengths = [None]
 
         for datalength in datalengths:
-            data_args = bst.util.DotDict(batch_size=2, n_data_worker=10,
-                                         drop_last=False, dataset=data_name,
-                                         data_length=datalength, shuffle=True)
+            data_args = brainstate.util.DotDict(batch_size=2, n_data_worker=10,
+                                                drop_last=False, dataset=data_name,
+                                                data_length=datalength, shuffle=True)
             dataset = get_snn_data(data_args)
 
             print(f'Processing {data_name} {datalength} with {model.__name__}')
@@ -257,7 +258,7 @@ def compare_jacobian_approx_on_real_dataset(fn='analysis/jac_cosine_sim_theorem3
                 model_cls=model,
                 num_data=100,
                 # spk_fun=lambda x: jnp.asarray(x > 0., dtype=x.dtype),
-                spk_fun=bst.surrogate.ReluGrad(),
+                spk_fun=brainstate.surrogate.ReluGrad(),
                 **args,
             )
 
@@ -276,7 +277,7 @@ def compare_jacobian_approx_on_real_dataset(fn='analysis/jac_cosine_sim_theorem3
                 plt.hist(bins, bins2, weights=hists, alpha=0.5)
                 plt.yscale('log')
 
-            fig, gs = bts.visualize.get_figure(2, 1 + len(etrace_dfs), 4.5, 6.0)
+            fig, gs = braintools.visualize.get_figure(2, 1 + len(etrace_dfs), 4.5, 6.0)
             fig.add_subplot(gs[0, 0])
             visualize_hist(etrace_xs[0])
             for j, (key, data) in enumerate(etrace_dfs.items()):
@@ -318,7 +319,7 @@ def compare_jacobian_approx_on_real_dataset(fn='analysis/jac_cosine_sim_theorem3
 
 def visualize_results():
     import seaborn
-    seaborn.set(font_scale=1.2, style=None)
+    seaborn.set_theme(font_scale=1.2, style=None)
     plt.style.use(['science', 'nature', 'notebook'])
 
     with open(
@@ -344,10 +345,10 @@ def visualize_results():
             continue
 
         print(data_name, datalength, model_name)
-        fig, gs = bts.visualize.get_figure(1, 1, 3., 4.)
+        fig, gs = braintools.visualize.get_figure(1, 1, 3., 4.)
         ax = fig.add_subplot(gs[0, 0])
         for cosine_key, cosine in value.items():
-            cosine_lower, cosine_upper = compute_confidence_interval(cosine)
+            cosine_lower, cosine_upper = _compute_confidence_interval(cosine)
             cosine_mean = cosine.mean(1)
             if cosine_mean[datalength // 2:].sum() != 0.:
                 # plt.plot(cosine_mean, label="$\mathbf{x} \otimes f_{%s}$" % (cosine_key.split('.')[1].lower()))

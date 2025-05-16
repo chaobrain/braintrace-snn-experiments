@@ -16,6 +16,7 @@
 
 import argparse
 import copy
+import os
 import pickle
 import time
 from functools import partial
@@ -23,7 +24,8 @@ from typing import Callable, List, Union, Sequence
 
 
 def _set_gpu_preallocation(mode: float):
-    """GPU memory allocation.
+    """
+    GPU memory allocation.
 
     If preallocation is enabled, this makes JAX preallocate ``percent`` of the total GPU memory,
     instead of the default 75%. Lowering the amount preallocated can fix OOMs that occur when the JAX program starts.
@@ -59,8 +61,6 @@ import brainscale
 import braintools
 import jax
 
-import os
-
 import brainstate
 import jax.numpy as jnp
 import numpy as np
@@ -84,10 +84,10 @@ from rsnn_models_and_data import (
 )
 from rsnn_hidden_jacobian_cosine import model_setting_1, model_setting_2
 
+brainstate.environ.set(dt=1.0)
+
 
 def compare_gradient_of_five_layer_net_by_random_data():
-    brainstate.environ.set(mode=brainstate.mixin.JointMode(brainstate.mixin.Batching(), brainstate.mixin.Training()),
-                           dt=1.0)
     brainstate.random.seed(1)
 
     # sets = dict(n_layer=1, model='lif_std_expcu_dense', rec_wscale=1.0, ff_wscale=1.0, spk_reset='soft', n_rank=80, tau_std=200.0, tau_syn=10.0, tau_v=10.,)
@@ -189,7 +189,7 @@ def compare_gradient_of_five_layer_net_by_random_data():
         # etrace = nn.DiagExpSmOnAlgorithm(partial(loss_fun, target=targets), decay_or_rank=n_rank)
         etrace = brainscale.ParamDimVjpAlgorithm(partial(loss_fun, target=targets), )
         etrace.compile_graph(0, jax.ShapeDtypeStruct((n_batch, n_in), brainstate.environ.dftype()))
-        f_grad = brainstate.augment.grad(etrace, grad_vars=weights)
+        f_grad = brainstate.augment.grad(etrace, grad_states=weights)
 
         def step(prev_grad, inp):
             i, inp = inp
@@ -198,23 +198,23 @@ def compare_gradient_of_five_layer_net_by_random_data():
             return new_grads, None
 
         grads = jax.tree.map(jnp.zeros_like, weights.to_dict_values())
-        grads, _ = brainstate.compile.scan(step, grads, (indices, inputs))
+        grads, _ = brainstate.transform.scan(step, grads, (indices, inputs))
         return grads
 
     def compute_bptt_grad(inputs, targets):
         def global_loss():
-            losses = brainstate.compile.for_loop(partial(loss_fun, target=targets), indices, inputs)
+            losses = brainstate.transform.for_loop(partial(loss_fun, target=targets), indices, inputs)
             return losses.sum()
 
-        return brainstate.augment.grad(global_loss, grad_vars=weights)()
+        return brainstate.augment.grad(global_loss, grad_states=weights)()
 
     indices = jnp.arange(n_seq)
     inp_spks = brainstate.random.random((n_seq, n_batch, n_in)) < 0.1
     inp_spks = jnp.asarray(inp_spks, dtype=brainstate.environ.dftype())
     target_outs = brainstate.random.randint(0, n_out, (n_batch,))
 
-    brainstate.nn.init_all_states(model, n_batch)
-    visualize_outs = brainstate.compile.for_loop(step_to_visualize, indices, inp_spks)
+    brainstate.nn.init_all_states(model)
+    visualize_outs = brainstate.transform.for_loop(step_to_visualize, indices, inp_spks)
     visualize.plot_multilayer_lif(inp_spks,
                                   visualize_outs['rec_s'],
                                   visualize_outs['rec_v'],
@@ -249,16 +249,17 @@ class ETraceDenseNetV2(NetWithMemSpkRegularize):
         ff_init = brainstate.init.KaimingNormal(scale=args.pop('ff_wscale'))
 
         # recurrent layers
-        brainstate.util.clear_name_cache()
         self.rec_layers = []
         for layer_idx in range(self.n_layer):
-            rec = model_cls(n_rec=n_rec,
-                            n_in=n_in,
-                            spk_fun=spk_fun,
-                            rec_init=rec_init,
-                            ff_init=ff_init,
-                            **args,
-                            **kwargs, )
+            rec = model_cls(
+                n_rec=n_rec,
+                n_in=n_in,
+                spk_fun=spk_fun,
+                rec_init=rec_init,
+                ff_init=ff_init,
+                **args,
+                **kwargs,
+            )
             n_in = n_rec
             self.rec_layers.append(rec)
 
@@ -295,7 +296,6 @@ def _compare(
     n_data: int = 500,
     show: bool = False,
     frac_sim: float = 0.,
-    diag_jacobian: str = 'vjp'
 ):
     weights = model.states().subset(brainstate.ParamState)
 
@@ -305,72 +305,81 @@ def _compare(
         return model.visualize_variables()
 
     def run_to_visualize(inputs):
-        brainstate.nn.init_all_states(model, 1)
+        brainstate.nn.init_all_states(model)
         indices = np.arange(inputs.shape[0])
-        visualize_outs = brainstate.compile.for_loop(step_to_visualize, indices, inputs)
-        visualize.plot_multilayer_lif(inputs,
-                                      visualize_outs['rec_s'],
-                                      visualize_outs['rec_v'],
-                                      visualize_outs['out_v'],
-                                      show=True,
-                                      num_vis=1)
+        visualize_outs = brainstate.transform.for_loop(step_to_visualize, indices, inputs)
+        visualize.plot_multilayer_lif(
+            inputs,
+            visualize_outs['rec_s'],
+            visualize_outs['rec_v'],
+            visualize_outs['out_v'],
+            show=True,
+            num_vis=1
+        )
 
     def sim_step(i, inp):
         with brainstate.environ.context(i=i, t=i * brainstate.environ.get_dt(), fit=True):
             out = model(inp)
         return out
 
-    def loss_fun(i, inp, target):
-        with brainstate.environ.context(i=i, t=i * brainstate.environ.get_dt(), fit=True):
-            out = model(inp)
-        return braintools.metric.softmax_cross_entropy_with_integer_labels(out, target).mean()
+    class Model(brainstate.nn.Module):
+        def __init__(self, target):
+            super().__init__()
+            self.model = model
+            self.target = target
 
-    @brainstate.compile.jit(static_argnums=(0, 1, 2))
+        def update(self, i, inp):
+            with brainstate.environ.context(i=i, t=i * brainstate.environ.get_dt(), fit=True):
+                out = model(inp)
+            return braintools.metric.softmax_cross_entropy_with_integer_labels(out, self.target).mean()
+
+    @brainstate.transform.jit(static_argnums=(0, 1, 2))
     def compute_etrace_grad(method: str, n_rank, n_sim, inputs, targets):
-        brainstate.nn.init_all_states(model, 1)
+        brainstate.nn.init_all_states(model)
+
+        loss_fn = Model(target=targets)
 
         if method == 'diag_expsm':
-            etrace = brainscale.DiagIODimAlgorithm(partial(loss_fun, target=targets),
-                                                   decay_or_rank=n_rank,
-                                                   diag_normalize=None,
-                                                   diag_jacobian=diag_jacobian)
+            etrace = brainscale.IODimVjpAlgorithm(loss_fn, decay_or_rank=n_rank)
         elif method == 'diag':
-            etrace = brainscale.DiagParamDimAlgorithm(partial(loss_fun, target=targets),
-                                                      diag_normalize=None,
-                                                      diag_jacobian=diag_jacobian)
+            etrace = brainscale.ParamDimVjpAlgorithm(loss_fn)
         else:
             raise ValueError(f'Unknown method {method}')
-        etrace.compile_graph(0, jax.ShapeDtypeStruct((1, model.n_in), brainstate.environ.dftype()))
-        f_grad = brainstate.augment.grad(etrace, grad_vars=weights)
+        etrace.compile_graph(0, jax.ShapeDtypeStruct([model.n_in], brainstate.environ.dftype()))
+        f_grad = brainstate.transform.grad(etrace, grad_states=weights)
 
         def train_step(prev_grad, inp):
             i, inp = inp
-            cur_grads = f_grad(i, inp, running_index=i)
+            cur_grads = f_grad(i, inp)
             new_grads = jax.tree.map(jnp.add, cur_grads, prev_grad)
             return new_grads, None
 
         grads = jax.tree.map(jnp.zeros_like, weights.to_dict_values())
         indices = np.arange(inputs.shape[0])
         if n_sim > 0:
-            _ = brainstate.compile.for_loop(sim_step, indices[:n_sim], inputs[:n_sim])
-            grads, _ = brainstate.compile.scan(train_step, grads, (indices[n_sim:], inputs[n_sim:]))
+            _ = brainstate.transform.for_loop(sim_step, indices[:n_sim], inputs[:n_sim])
+            grads, _ = brainstate.transform.scan(train_step, grads, (indices[n_sim:], inputs[n_sim:]))
         else:
-            grads, _ = brainstate.compile.scan(train_step, grads, (indices, inputs))
+            grads, _ = brainstate.transform.scan(train_step, grads, (indices, inputs))
         return grads
 
-    @brainstate.compile.jit(static_argnums=(0,))
+    @brainstate.transform.jit(static_argnums=(0,))
     def compute_bptt_grad(n_sim, inputs, targets):
         def global_loss():
+            loss_fn = Model(target=targets)
+
             indices = np.arange(inputs.shape[0])
             if n_sim > 0:
-                _ = brainstate.compile.for_loop(sim_step, indices[:n_sim], inputs[:n_sim])
-                losses = brainstate.compile.for_loop(partial(loss_fun, target=targets), indices[n_sim:], inputs[n_sim:])
+                _ = brainstate.transform.for_loop(sim_step, indices[:n_sim], inputs[:n_sim])
+                losses = brainstate.transform.for_loop(loss_fn,
+                                                       indices[n_sim:],
+                                                       inputs[n_sim:])
             else:
-                losses = brainstate.compile.for_loop(partial(loss_fun, target=targets), indices, inputs)
+                losses = brainstate.transform.for_loop(loss_fn, indices, inputs)
             return losses.sum()
 
-        brainstate.nn.init_all_states(model, 1)
-        return brainstate.augment.grad(global_loss, grad_vars=weights)()
+        brainstate.nn.init_all_states(model)
+        return brainstate.augment.grad(global_loss, grad_states=weights)()
 
     def flatten(tree):
         leaves = jax.tree.leaves(tree)
@@ -401,6 +410,8 @@ def _compare(
 
         inp_spks = x_func(inp_spks)
         target_outs = y_func(target_outs)
+        inp_spks = jnp.squeeze(inp_spks)
+        target_outs = jnp.squeeze(target_outs)
         num_sim = int(frac_sim * inp_spks.shape[0]) if frac_sim > 0 else 0
 
         if show:
@@ -425,11 +436,9 @@ def _compare(
     return final_results
 
 
-def compare_gradient_by_neuromorphic_data(fn='analysis/jac_cosine_sim', frac_sim=0.99, diag_jacobian: str = 'vjp'):
+def compare_gradient_by_neuromorphic_data(fn='analysis/jac_cosine_sim', frac_sim=0.99):
     if not os.path.exists(fn):
         os.makedirs(fn)
-    brainstate.environ.set(mode=brainstate.mixin.JointMode(brainstate.mixin.Batching(), brainstate.mixin.Training()),
-                           dt=1.0)
     # brainstate.random.seed(1)
 
     n_rec = 200
@@ -439,12 +448,14 @@ def compare_gradient_by_neuromorphic_data(fn='analysis/jac_cosine_sim', frac_sim
     for data_name, _, model_cls, args in model_setting_1:
         datalengths = [200, 400, 600, 1000] if data_name == 'gesture' else [None]
         for datalength in datalengths:
-            data_args = brainstate.util.DotDict(batch_size=1,
-                                                n_data_worker=1,
-                                                drop_last=False,
-                                                dataset=data_name,
-                                                data_length=datalength,
-                                                shuffle=False)
+            data_args = brainstate.util.DotDict(
+                batch_size=1,
+                n_data_worker=1,
+                drop_last=False,
+                dataset=data_name,
+                data_length=datalength,
+                shuffle=False
+            )
             dataset = get_snn_data(data_args)
 
             print(f'Processing {data_name} {datalength} with {model_cls.__name__}')
@@ -453,7 +464,7 @@ def compare_gradient_by_neuromorphic_data(fn='analysis/jac_cosine_sim', frac_sim
             for k, v in args.items():
                 args__[k] = v
             model = ETraceDenseNetV2(
-                n_in=np.prod(dataset.in_shape),
+                n_in=int(np.prod(dataset.in_shape)),
                 n_rec=n_rec,
                 n_out=dataset.out_shape,
                 model_cls=model_cls,
@@ -467,7 +478,6 @@ def compare_gradient_by_neuromorphic_data(fn='analysis/jac_cosine_sim', frac_sim
                 y_func=dataset.label_process,
                 n_data=200,
                 frac_sim=frac_sim,
-                diag_jacobian=diag_jacobian
             )
 
             print(f'{data_name} {datalength} {model_cls.__name__}')
@@ -475,7 +485,7 @@ def compare_gradient_by_neuromorphic_data(fn='analysis/jac_cosine_sim', frac_sim
             results[(data_name, model_cls.__name__, datalength)] = r
 
     now = time.strftime('%Y-%m-%d %H-%M-%S', time.localtime(int(round(time.time() * 1000)) / 1000))
-    filename = f'gradient-cosine-n_rec={n_rec}-frac_sim={frac_sim}-diag_jacobian={diag_jacobian}-{now}.pkl'
+    filename = f'gradient-cosine-n_rec={n_rec}-frac_sim={frac_sim}-{now}.pkl'
     with open(os.path.join(fn, filename), 'wb') as fout:
         pickle.dump(results, fout)
 
@@ -487,8 +497,6 @@ def compare_gradient_multi_layer_by_neuromorphic_data(
 ):
     if not os.path.exists(fn):
         os.makedirs(fn)
-    brainstate.environ.set(mode=brainstate.mixin.JointMode(brainstate.mixin.Batching(), brainstate.mixin.Training()),
-                           dt=1.0)
     # brainstate.random.seed(1)
 
     n_rec = 200
@@ -537,8 +545,9 @@ def compare_gradient_multi_layer_by_neuromorphic_data(
             #   args__['ff_wscale'] *= 4.
             # # elif data_name == 'SHD':
             # #   args__['ff_wscale'] *= 4.
+
             model = ETraceDenseNetV2(
-                n_in=np.prod(dataset.in_shape),
+                n_in=int(np.prod(dataset.in_shape)),
                 n_rec=n_rec,
                 n_out=dataset.out_shape,
                 model_cls=model_cls,
@@ -568,8 +577,6 @@ def compare_gradient_multi_layer_by_neuromorphic_data(
 
 
 def compare_gradient_on_random_data():
-    brainstate.environ.set(mode=brainstate.mixin.JointMode(brainstate.mixin.Batching(), brainstate.mixin.Training()),
-                           dt=1.0)
     n_in = 100
     n_rec = 200
     n_out = 2
@@ -610,10 +617,7 @@ def compare_gradient_on_random_data():
 
 
 def compare_gradient_approx_when_recurrent_size_increases(fn='analysis/jac_cosine_sim', frac_sim=0.99):
-    brainstate.environ.set(mode=brainstate.mixin.JointMode(brainstate.mixin.Batching(), brainstate.mixin.Training()),
-                           dt=1.0)
     brainstate.random.seed(1)
-    brainstate.environ.set(dt=1.0)
     spk_fun = brainstate.surrogate.ReluGrad(width=1.)
 
     rec_sizes = [10, 50, 100, 300, 500, 1000, 2000, 4000, 8000, 10000, 20000, 40000]
@@ -643,7 +647,7 @@ def compare_gradient_approx_when_recurrent_size_increases(fn='analysis/jac_cosin
                 for k, v in model_args.items():
                     args__[k] = v
                 model = ETraceDenseNetV2(
-                    n_in=np.prod(dataset.in_shape),
+                    n_in=int(np.prod(dataset.in_shape)),
                     n_rec=n_rec,
                     n_out=dataset.out_shape,
                     model_cls=model_cls,
@@ -680,10 +684,7 @@ def compare_gradient_approx_when_recurrent_size_increases(fn='analysis/jac_cosin
 
 
 def compare_gradient_approx_when_ff_conn_increases(fn='analysis/jac_cosine_sim', frac_sim=0.99):
-    brainstate.environ.set(mode=brainstate.mixin.JointMode(brainstate.mixin.Batching(), brainstate.mixin.Training()),
-                           dt=1.0)
     brainstate.random.seed(1)
-    brainstate.environ.set(dt=1.0)
     spk_fun = brainstate.surrogate.ReluGrad(width=1.)
     n_rec = 200
     n_layer = 1
@@ -711,7 +712,7 @@ def compare_gradient_approx_when_ff_conn_increases(fn='analysis/jac_cosine_sim',
                     args__[k] = v
                 args__['ff_wscale'] = args__['ff_wscale'] * ff_frac
                 model = ETraceDenseNetV2(
-                    n_in=np.prod(dataset.in_shape),
+                    n_in=int(np.prod(dataset.in_shape)),
                     n_rec=n_rec,
                     n_out=dataset.out_shape,
                     model_cls=model_cls,
@@ -748,10 +749,7 @@ def compare_gradient_approx_when_ff_conn_increases(fn='analysis/jac_cosine_sim',
 
 
 def compare_gradient_approx_when_rec_conn_increases(fn='analysis/jac_cosine_sim', frac_sim=0.99):
-    brainstate.environ.set(mode=brainstate.mixin.JointMode(brainstate.mixin.Batching(), brainstate.mixin.Training()),
-                           dt=1.0)
     brainstate.random.seed(1)
-    brainstate.environ.set(dt=1.0)
     spk_fun = brainstate.surrogate.ReluGrad(width=1.)
     n_rec = 200
     n_layer = 1
@@ -779,7 +777,7 @@ def compare_gradient_approx_when_rec_conn_increases(fn='analysis/jac_cosine_sim'
                     args__[k] = v
                 args__['rec_wscale'] = args__['rec_wscale'] * rec_frac
                 model = ETraceDenseNetV2(
-                    n_in=np.prod(dataset.in_shape),
+                    n_in=int(np.prod(dataset.in_shape)),
                     n_rec=n_rec,
                     n_out=dataset.out_shape,
                     model_cls=model_cls,
@@ -823,17 +821,12 @@ if __name__ == '__main__':
     compare_gradient_multi_layer_by_neuromorphic_data(frac_sim=0.0, n_layer=5)
 
     # compare_gradient_by_neuromorphic_data(frac_sim=0.)
-    # compare_gradient_by_neuromorphic_data(frac_sim=0.9, diag_jacobian='exact')
 
-    # compare_gradient_multi_layer_by_neuromorphic_data(frac_sim=0., n_layer=3, param='set1')
-    # compare_gradient_multi_layer_by_neuromorphic_data(frac_sim=0., n_layer=3, param='set2')
-    # compare_gradient_multi_layer_by_neuromorphic_data(frac_sim=0., n_layer=4, param='set1')
-    # compare_gradient_multi_layer_by_neuromorphic_data(frac_sim=0., n_layer=4, param='set2')
+    # compare_gradient_multi_layer_by_neuromorphic_data(frac_sim=0., n_layer=3)
+    # compare_gradient_multi_layer_by_neuromorphic_data(frac_sim=0., n_layer=4)
 
-    # compare_gradient_multi_layer_by_neuromorphic_data(frac_sim=0.9, n_layer=3, param='set1')
-    # compare_gradient_multi_layer_by_neuromorphic_data(frac_sim=0.9, n_layer=3, param='set2')
-    # compare_gradient_multi_layer_by_neuromorphic_data(frac_sim=0.9, n_layer=4, param='set1')
-    # compare_gradient_multi_layer_by_neuromorphic_data(frac_sim=0.9, n_layer=4, param='set2')
+    # compare_gradient_multi_layer_by_neuromorphic_data(frac_sim=0.9, n_layer=3)
+    # compare_gradient_multi_layer_by_neuromorphic_data(frac_sim=0.9, n_layer=4)
 
     # compare_gradient_on_random_data()
 

@@ -13,17 +13,23 @@
 # limitations under the License.
 # ==============================================================================
 
+import brainscale
 import brainstate
 import braintools
-import brainscale
 import jax
 import jax.numpy as jnp
 
+brainstate.environ.set(dt=1.0)
+
 
 class Linear(brainstate.nn.Module):
-    def __init__(self, n_in, n_out,
-                 w_init=brainstate.init.KaimingNormal(),
-                 b_init=brainstate.init.ZeroInit()):
+    def __init__(
+        self,
+        n_in: int,
+        n_out: int,
+        w_init=brainstate.init.KaimingNormal(),
+        b_init=brainstate.init.ZeroInit()
+    ):
         super().__init__()
         self.in_size = (n_in,)
         self.out_size = (n_out,)
@@ -31,9 +37,7 @@ class Linear(brainstate.nn.Module):
         # parameters
         param = dict(weight=w_init([n_in, n_out]), bias=b_init([n_out]))
         # operations
-        op = lambda x, w: jnp.dot(x, w['weight']) + w['bias']
-        # the etrace weight and op
-        self.weight_op = brainscale.ETraceParamOp(param, op)
+        self.weight_op = brainscale.ETraceParam(param, brainscale.MatMulOp())
 
     def update(self, x):
         # call the model by ".execute" the weight_op
@@ -42,8 +46,14 @@ class Linear(brainstate.nn.Module):
 
 class LIF(brainstate.nn.Neuron):
     def __init__(
-        self, in_size, keep_size=False, tau=5., V_th=1., V_reset=0.,
-        V_rest=0., spk_fun=brainstate.surrogate.ReluGrad(), spk_reset='soft'
+        self,
+        in_size,
+        tau: float = 5.,
+        V_th: float = 1.,
+        V_reset: float = 0.,
+        V_rest: float = 0.,
+        spk_fun=brainstate.surrogate.ReluGrad(),
+        spk_reset='soft'
     ):
         super().__init__(in_size, spk_fun=spk_fun, spk_reset=spk_reset)
 
@@ -55,7 +65,7 @@ class LIF(brainstate.nn.Neuron):
 
     def dv(self, v, t, x):
         # "sum_current_inputs()" sums up all incoming currents
-        x = self.sum_current_inputs(v, init=x)
+        x = self.sum_current_inputs(x, v)
         # the differential equation
         return (-v + self.V_rest + x) / self.tau
 
@@ -63,7 +73,7 @@ class LIF(brainstate.nn.Neuron):
         # initialize the membrane potential
         bs = () if batch_size is None else (batch_size,)
         V = jax.numpy.full(bs + self.varshape, self.V_rest)
-        self.V = brainscale.ETraceVar(V)
+        self.V = brainscale.ETraceState(V)
 
     def get_spike(self, V=None):
         V = self.V.value if V is None else V
@@ -83,7 +93,7 @@ class LIF(brainstate.nn.Neuron):
         V = last_v - (V_th - self.V_reset) * lst_spk
         # the current membrane potential
         V = brainstate.nn.exp_euler_step(self.dv, V, None, x)
-        V = V + self.sum_delta_inputs()
+        V = self.sum_delta_inputs(V)
         self.V.value = V
         # the current spike
         return self.get_spike(V)
@@ -95,41 +105,47 @@ class LIF_Delta_Net(brainstate.nn.Module):
     """
 
     def __init__(
-        self, n_in, n_rec, n_out, tau_mem=5., V_th=1.,
+        self,
+        n_in: int,
+        n_rec: int,
+        n_out: int,
+        tau_mem: float = 5.,
+        V_th: float = 1.,
     ):
         super().__init__()
         self.neu = LIF(n_rec, tau=tau_mem, V_th=V_th)
         self.syn = brainstate.nn.DeltaProj(comm=Linear(n_in + n_rec, n_rec), post=self.neu)
-        self.out = brainscale.LeakyRateReadout(n_rec, n_out)
+        self.out = brainscale.nn.LeakyRateReadout(n_rec, n_out, tau=5.0)
 
-    def update(self, spk):
-        spk = jnp.concat([spk, self.neu.get_spike()], axis=-1)
-        self.syn(spk)
-        return self.out(self.neu())
+    def update(self, i, spk):
+        with brainstate.environ.context(i=i, t=i * brainstate.environ.get_dt()):
+            spk = jnp.concat([spk, self.neu.get_spike()], axis=-1)
+            self.syn(spk)
+            return self.out(self.neu())
 
 
 # define the one-batch inputs and targets
-n_seq, n_batch = 512, 128
-inputs = brainstate.random.rand(n_seq, n_batch, 10) < 0.1
-targets = brainstate.random.randint(0, 2, (n_batch,))
+n_seq = 512
+inputs = brainstate.random.rand(n_seq, 10) < 0.1
+targets = brainstate.random.randint(0, 2)
 
 # instantiate a spiking network
 net = LIF_Delta_Net(10, 100, 2)
-brainstate.init_states(net, batch_size=n_batch)
+brainstate.nn.init_all_states(net)
 
 # online learning algorithm
 method = 'es-diag'  # or 'diag', 'hybrid'
 if method == 'es-diag':
-    model = brainscale.DiagIODimAlgorithm(net, decay_or_rank=0.98)
+    model = brainscale.IODimVjpAlgorithm(net, decay_or_rank=0.98)
 elif method == 'diag':
-    model = brainscale.DiagParamDimAlgorithm(net)
+    model = brainscale.ParamDimVjpAlgorithm(net)
 elif method == 'hybrid':
-    model = brainscale.DiagHybridDimAlgorithm(net, decay_or_rank=0.98)
+    model = brainscale.HybridDimVjpAlgorithm(net, decay_or_rank=0.98)
 else:
     raise ValueError(f'Unknown online learning methods: {method}.')
 
 # compile the eligibility trace graph using the one-step input
-model.compile_graph(inputs[0])
+model.compile_graph(0, inputs[0])
 
 # retrieve parameters that need to compute gradients
 weights = net.states().subset(brainstate.ParamState)
@@ -137,7 +153,7 @@ weights = net.states().subset(brainstate.ParamState)
 
 # define loss function
 def loss_fn(i, x):
-    out = model(x, running_index=i)
+    out = model(i, x)
     return jnp.mean(braintools.metric.softmax_cross_entropy_with_integer_labels(out, targets))
 
 
