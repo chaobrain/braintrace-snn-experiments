@@ -2,14 +2,13 @@
 Gated Recurrent Unit
 """
 
-import brainunit as u
-import jax
-import jax.numpy as jnp
 from typing import Callable, Union
 
 import brainscale
 import brainstate
-import brainstate as bst
+import brainunit as u
+import jax
+import jax.numpy as jnp
 
 __all__ = [
     'FiringRateState',
@@ -24,7 +23,7 @@ class FiringRateState(brainstate.ShortTermState):
     pass
 
 
-class SpikeFunction(bst.surrogate.Surrogate):
+class SpikeFunction(brainstate.surrogate.Surrogate):
     """
     A surrogate gradient function for spiking neural networks.
 
@@ -74,7 +73,7 @@ class SpikeFunction(bst.surrogate.Surrogate):
         return dz_du
 
 
-class EGRU(bst.nn.Module):
+class EGRU(brainstate.nn.Module):
     r"""
     Event based Gated Recurrent Unit layer [1]_.
 
@@ -130,14 +129,14 @@ class EGRU(bst.nn.Module):
 
     def __init__(
         self,
-        input_size: bst.typing.Size,
-        hidden_size: bst.typing.Size,
+        input_size: brainstate.typing.Size,
+        hidden_size: brainstate.typing.Size,
         dropout_prob: float = 0.0,
         zoneout_prob: float = 0.0,
         thr_mean: float = 0.3,
-        w_init: Union[bst.typing.ArrayLike, Callable] = bst.init.XavierNormal(),
-        b_init: Union[bst.typing.ArrayLike, Callable] = bst.init.ZeroInit(),
-        state_init: Union[bst.typing.ArrayLike, Callable] = bst.init.ZeroInit(),
+        w_init: Union[brainstate.typing.ArrayLike, Callable] = brainstate.init.XavierNormal(),
+        b_init: Union[brainstate.typing.ArrayLike, Callable] = brainstate.init.ZeroInit(),
+        state_init: Union[brainstate.typing.ArrayLike, Callable] = brainstate.init.ZeroInit(),
         param_type: Callable = brainscale.ETraceParam,
         spk_fun: Callable = SpikeFunction(dampening_factor=0.7, pseudo_derivative_support=1.0),
     ):
@@ -166,8 +165,8 @@ class EGRU(bst.nn.Module):
         assert 0 <= zoneout_prob <= 1, 'GRU: zoneout_prob must be in [0.0, 1.0]'
         self.zoneout_prob = zoneout_prob
         self.dropout_prob = dropout_prob
-        self.zoneout = bst.nn.Dropout(1. - self.zoneout_prob)
-        self.dropout = bst.nn.Dropout(1. - self.dropout_prob)
+        self.zoneout = brainstate.nn.Dropout(1. - self.zoneout_prob)
+        self.dropout = brainstate.nn.Dropout(1. - self.dropout_prob)
 
         self.alpha = 0.9
         self.state_init = state_init
@@ -183,34 +182,34 @@ class EGRU(bst.nn.Module):
         assert 0 < thr_mean < 1, f"thr_mean must be between 0 and 1, but {thr_mean} was given"
         beta = 3
         alpha = beta * thr_mean / (1 - thr_mean)
-        thr = bst.random.beta(alpha, beta, self.out_size[-1])
+        thr = brainstate.random.beta(alpha, beta, self.out_size[-1])
         self.thr = brainscale.ElemWiseParam(thr)
 
     def init_state(self, batch_size: int = None, **kwargs):
         # bst.random.random(1)
 
         # hidden state for all sequences.
-        self.h = brainscale.ETraceState(bst.init.param(self.state_init, self.out_size, batch_size))
+        self.h = brainscale.ETraceState(brainstate.init.param(self.state_init, self.out_size, batch_size))
 
         # the output gate for all sequences (values: 0 or 1).
-        self.o = brainstate.HiddenState(bst.init.param(self.state_init, self.out_size, batch_size))
+        self.o = brainstate.HiddenState(brainstate.init.param(self.state_init, self.out_size, batch_size))
         # self.o = brainscale.ETraceState(bst.init.param(self.state_init, self.out_size, batch_size))
 
         # internal state variable
-        self.y = brainscale.ETraceState(bst.init.param(self.state_init, self.out_size, batch_size))
+        self.y = brainscale.ETraceState(brainstate.init.param(self.state_init, self.out_size, batch_size))
 
         # smoothed output values, can be beneficial for training.
-        self.tr = brainscale.ETraceState(bst.init.param(self.state_init, self.out_size, batch_size))
+        self.tr = brainscale.ETraceState(brainstate.init.param(self.state_init, self.out_size, batch_size))
 
         # # firing rate
-        self.fr = FiringRateState(bst.init.param(bst.init.ZeroInit(), self.out_size, batch_size))
+        self.fr = FiringRateState(brainstate.init.param(brainstate.init.ZeroInit(), self.out_size, batch_size))
 
     def reset_state(self, batch_size: int = None, **kwargs):
-        self.h.value = bst.init.param(self.state_init, self.out_size, batch_size)
-        self.o.value = bst.init.param(self.state_init, self.out_size, batch_size)
-        self.y.value = bst.init.param(self.state_init, self.out_size, batch_size)
-        self.tr.value = bst.init.param(self.state_init, self.out_size, batch_size)
-        self.fr.value = bst.init.param(bst.init.ZeroInit(), self.out_size, batch_size)
+        self.h.value = brainstate.init.param(self.state_init, self.out_size, batch_size)
+        self.o.value = brainstate.init.param(self.state_init, self.out_size, batch_size)
+        self.y.value = brainstate.init.param(self.state_init, self.out_size, batch_size)
+        self.tr.value = brainstate.init.param(self.state_init, self.out_size, batch_size)
+        self.fr.value = brainstate.init.param(brainstate.init.ZeroInit(), self.out_size, batch_size)
 
     def update(self, x):
         """
@@ -234,7 +233,7 @@ class EGRU(bst.nn.Module):
           trace: smoothed output values, can be beneficial for training.
 
         """
-        fit = bst.environ.get('fit')
+        fit = brainstate.environ.get('fit')
 
         old_h = self.h.value
         xh = u.math.concatenate([x, old_h], axis=-1)
@@ -259,7 +258,7 @@ class EGRU(bst.nn.Module):
         return self.tr.value
 
 
-class MergeEvents(bst.nn.Module):
+class MergeEvents(brainstate.nn.Module):
     """
     A module for merging event data in neural networks.
 
@@ -291,7 +290,7 @@ class MergeEvents(bst.nn.Module):
 
     def __init__(
         self,
-        in_size: bst.typing.Size,
+        in_size: brainstate.typing.Size,
         method: str = 'mean',
         flatten: bool = True,
     ):
@@ -333,7 +332,7 @@ class MergeEvents(bst.nn.Module):
             return data
 
 
-class Network(bst.nn.Module):
+class Network(brainstate.nn.Module):
     """
     A neural network module that combines convolutional and recurrent layers for processing event-based data.
 
@@ -371,7 +370,7 @@ class Network(bst.nn.Module):
 
     def __init__(
         self,
-        input_size: bst.typing.Size,
+        input_size: brainstate.typing.Size,
         frame_size: int,
         n_rnn_layer: int,
         n_rnn_hidden: int,
@@ -400,7 +399,7 @@ class Network(bst.nn.Module):
         self.layer_dropout = layer_dropout
 
         # Max pooling
-        self.pool = bst.nn.Sequential(
+        self.pool = brainstate.nn.Sequential(
             brainscale.nn.MaxPool2d(in_size=input_size, kernel_size=128 // frame_size),
             MergeEvents.desc(method=event_agg_method, flatten=not use_cnn),
         )
@@ -408,7 +407,7 @@ class Network(bst.nn.Module):
 
         # cnn layers
         if self.use_cnn:
-            self.cnn = bst.nn.Sequential(
+            self.cnn = brainstate.nn.Sequential(
                 brainscale.nn.Conv2d(self.pool.out_size, out_channels=64, kernel_size=11, stride=4, padding=2),
                 brainscale.nn.ReLU(),
                 brainscale.nn.MaxPool2d.desc(kernel_size=3, stride=2),
@@ -471,7 +470,7 @@ class Network(bst.nn.Module):
             rnn_layers.append(rnn)
             if self.layer_dropout > 0.:
                 rnn_layers.append(brainscale.nn.Dropout(1 - self.layer_dropout))
-        self.rnn = bst.nn.Sequential(*rnn_layers)
+        self.rnn = brainstate.nn.Sequential(*rnn_layers)
 
         # fully connected readout layer
         self.fc = brainscale.nn.Linear(self.hidden_dim, n_class)
@@ -498,17 +497,17 @@ class Network(bst.nn.Module):
 
 def f_run():
     gru = EGRU(10, 10)
-    gru = bst.nn.EnvironContext(gru, fit=True)
+    gru = brainstate.nn.EnvironContext(gru, fit=True)
 
     def loss():
         batch_size = 5
-        bst.nn.vmap_init_all_states(gru, axis_size=batch_size, state_tag='hidden')
-        print(bst.graph.states(gru, 'hidden'))
+        brainstate.nn.vmap_init_all_states(gru, axis_size=batch_size, state_tag='hidden')
+        print(brainstate.graph.states(gru, 'hidden'))
 
-        y = bst.nn.Vmap(gru, vmap_states='hidden')(bst.random.randn(batch_size, 10))
+        y = brainstate.nn.Vmap(gru, vmap_states='hidden')(brainstate.random.randn(batch_size, 10))
         return (y - 1.).sum()
 
-    f_grad = bst.augment.grad(loss, grad_states=gru.states(bst.ParamState))
+    f_grad = brainstate.augment.grad(loss, grad_states=gru.states(brainstate.ParamState))
     print(f_grad)
     print(f_grad())
 

@@ -398,10 +398,10 @@ class Trainer(brainstate.util.PrettyObject):
             self.logger.warning(f'Epoch {epoch}, train loss {train_loss:.8f}, val loss = {val_loss:.8f}')
             self.logger.warning(f'Epoch {epoch}, train acc {train_acc:.8f}, val acc = {val_acc:.8f}')
 
-            # saving weights to checkpoint
-            if epoch % self.args.log_interval == 0:
-                path = os.path.join(self.tensorboard_dir, f'{self.args.rnn_type}-Epoch-{epoch}-Acc-{val_acc}.msgpack')
-                save_model_states(path, self.model, self.optimizer, epoch=epoch, accuracy=val_acc)
+            # # saving weights to checkpoint
+            # if epoch % self.args.log_interval == 0:
+            #     path = os.path.join(self.tensorboard_dir, f'{self.args.rnn_type}-Epoch-{epoch}-Acc-{val_acc}.msgpack')
+            #     save_model_states(path, self.model, self.optimizer, epoch=epoch, accuracy=val_acc)
 
             lr = self.optimizer.lr()
             self.logger.warning('-' * 89)

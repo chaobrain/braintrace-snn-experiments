@@ -172,7 +172,7 @@ def get_dvs128_test_dataset(opt):
         cached_test_dataset_time,
         batch_size=opt.batch_size,
         collate_fn=tonic.collation.PadTensors(batch_first=False),
-        drop_last=True,
+        drop_last=False,
         num_workers=num_worker,
     )
 
@@ -191,14 +191,14 @@ def get_transforms(opt):
     )
     return frame_transform_time, 'toframe'
 
-    # denoise_transform = tonic.transforms.Denoise(filter_time=10000)
-    # transform = tonic.transforms.Compose(
-    #     [
-    #         # denoise_transform,
-    #         frame_transform_time,
-    #     ]
-    # )
-    # return transform, 'toframe'
+    denoise_transform = tonic.transforms.Denoise(filter_time=10000)
+    transform = tonic.transforms.Compose(
+        [
+            # denoise_transform,
+            frame_transform_time,
+        ]
+    )
+    return transform, 'toframe'
 
 
 if __name__ == '__main__':
