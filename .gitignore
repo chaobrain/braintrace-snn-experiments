@@ -287,3 +287,10 @@ cython_debug/
 /sparch/nmnistv2_bptt_search/
 /sparch/nmnistv2_d-rtrl_search/
 /sparch/nmnistv2_esd-rtrl_0_99_search/
+/sparch/b/
+/sparch/bptt_gesturev2/
+/sparch/d-rtrl_gesturev2/
+/event_gru_dvs_gesture/others/
+/event_gru_dvs_gesture/logs/
+/vgg_gesture/experiments/
+/event_gru_dvs_gesture/analysis.py
