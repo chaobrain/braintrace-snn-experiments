@@ -49,6 +49,29 @@ python task-rsnn-long-term-dependency.py --epochs 2000   --method diag --dataset
 
 
 
+## EI network for decision making tasks
+
+ES-D-RTRL training of the EI network for decision making tasks. 
+
+```bash
+cd ./ei_coba_net_decision_making
+python training.py --tau_neu 200 --tau_syn 10 --tau_I2 2000  --ff_scale 4.0 --rec_scale 2.0  --method esd-rtrl  --n_rec 800  --epoch_per_step 20 --diff_spike  0  --epochs 300 --lr 0.001 --etrace_decay 0.99 
+```
+
+D-RTRL training of the EI network for decision making tasks. 
+
+```bash
+python training.py --tau_neu 200 --tau_syn 10 --tau_I2 2000  --ff_scale 4.0 --rec_scale 2.0  --method d-rtrl  --n_rec 800  --epoch_per_step 30 --diff_spike  0  --epochs 300 --lr 0.001
+```
+
+
+BPTT training of the EI network for decision making tasks. 
+
+```bash
+python training.py --tau_neu 200 --tau_syn 10 --tau_I2 2000  --ff_scale 4.0 --rec_scale 2.0  --method bptt  --n_rec 800  --epoch_per_step 30 --diff_spike  0  --epochs 300 --lr 0.001 
+```
+
+
 ## Memory and speed evaluation
 
 
@@ -62,34 +85,82 @@ python task-memory-and-speed-evaluation-tpu.py
 
 
 
-## RSNN image classification on N-MNIST dataset
+## RSNN image classification on Gesture dataset
 
+The code below is used to train a spiking neural network on the Gesture dataset using different methods (BPTT, ES-D-RTRL, D-RTRL).
+
+The codebase is located in `./event_gru_dvs_gesture` di
+
+
+BPTT
 
 ```bash
-# BPTT
-python task-image-classification.py --devices 0 --dataset nmnist --data_length 400 --epoch 100 --n_layer 3 --n_rec 512 --method bptt --model lif-delta --exp_name test-nmnist --warmup_ratio 0.
-
-# ES-D-RTRL (IO Dim)
-python task-image-classification.py --devices 1 --dataset nmnist --data_length 400 --epoch 100 --n_layer 3 --n_rec 512 --method expsm_diag --etrace_decay 0.9 --model lif-delta --exp_name test-nmnist --warmup_ratio 0.
-
-# D-RTRL (Param Dim)
-python task-image-classification.py --devices 2 --dataset nmnist --data_length 400 --epoch 100 --n_layer 3 --n_rec 512 --method diag --model lif-delta --exp_name test-nmnist --warmup_ratio 0.
+python main.py --batch-size 64 --units 1024 \
+    --num-layers 1 --frame-size 128 --method bptt  \
+    --train-epochs 500 --frame-time 25 --rnn-type event-gru \
+    --learning-rate 0.001 --lr-gamma 0.9 --lr-decay-epochs 100 \
+    --event-agg-method mean --use-cnn --dropout 0.5 --zoneout 0 \
+    --pseudo-derivative-width 1.7 --threshold-mean 0.25 --augment-data \
+    --devices 0  --data ../data --cache ./cache
 ```
 
 
-## RSNN image classification on SHD dataset
-
+D-RTRL
 
 ```bash
-# BPTT
-python task-image-classification.py --devices 0 --dataset shd --data_length 400 --epoch 100 --n_layer 3 --n_rec 512 --method bptt --model lif-delta --exp_name test-shd --warmup_ratio 0.
+python main.py --batch-size 64 --units 1024 \
+    --num-layers 1 --frame-size 128 --method d-rtrl  \
+    --train-epochs 500 --frame-time 25 --rnn-type event-gru \
+    --learning-rate 0.001 --lr-gamma 0.9 --lr-decay-epochs 50 \
+    --event-agg-method mean --use-cnn --dropout 0.5 --zoneout 0 \
+    --pseudo-derivative-width 1.7 --threshold-mean 0.25 \
+    --augment-data  --data ../data --cache ./cache --devices 1
+```
 
-# ES-D-RTRL (IO Dim)
-python task-image-classification.py --devices 1 --dataset shd --data_length 400 --epoch 100 --n_layer 3 --n_rec 512 --method expsm_diag --etrace_decay 0.9 --model lif-delta --exp_name test-shd --warmup_ratio 0.
+ES-D-RTRL
 
-# D-RTRL (Param Dim)
-python task-image-classification.py --devices 2 --dataset shd --data_length 400 --epoch 100 --n_layer 3 --n_rec 512 --method diag --model lif-delta --exp_name test-shd --warmup_ratio 0.
+```bash
+python main.py --batch-size 64 --units 1024 \
+    --num-layers 1 --frame-size 128 --method es-d-rtrl --etrace-decay 0.2  \
+    --train-epochs 500 --frame-time 25 --rnn-type event-gru \
+    --learning-rate 0.001 --lr-gamma 0.9 --lr-decay-epochs 100 \
+    --event-agg-method mean --use-cnn --dropout 0.5 --zoneout 0 \
+    --pseudo-derivative-width 1.7 --threshold-mean 0.25 \
+    --augment-data  --data ../data --cache ./cache --devices 6
 ```
 
 
+
+## RSNN classification on SHD dataset
+
+
+The codebase is located in `./sparch` directory. The code below is used to train a spiking neural network on the SHD dataset using different methods (BPTT, ES-D-RTRL, D-RTRL).
+
+BPTT
+
+```bash
+python main.py --model_type LIF --dataset_name shd  --nb_epochs 100 --method bptt --nb_hiddens 1024
+python main.py --model_type RLIF --dataset_name shd  --nb_epochs 100 --method bptt --nb_hiddens 1024
+python main.py --model_type adLIF --dataset_name shd --nb_epochs 100 --method bptt --nb_hiddens 1024
+python main.py --model_type RadLIF --dataset_name shd --nb_epochs 100 --method bptt --nb_hiddens 1024
+```
+
+D-RTRL
+
+```bash
+python main.py --model_type LIF --dataset_name shd  --nb_epochs 100 --method d-rtrl --nb_hiddens 1024
+python main.py --model_type RLIF --dataset_name shd  --nb_epochs 100 --method d-rtrl --nb_hiddens 1024
+python main.py --model_type adLIF --dataset_name shd --nb_epochs 100 --method d-rtrl --nb_hiddens 1024
+python main.py --model_type RadLIF --dataset_name shd --nb_epochs 100 --method d-rtrl --nb_hiddens 1024
+```
+
+
+ES-D-RTRL
+
+```bash
+python main.py --model_type LIF --dataset_name shd --nb_epochs 100 --method esd-rtrl --nb_hiddens 1024 --etrace_decay 0.8
+python main.py --model_type RLIF --dataset_name shd --nb_epochs 100 --method esd-rtrl --nb_hiddens 1024 --etrace_decay 0.8
+python main.py --model_type adLIF --dataset_name shd --nb_epochs 100 --method esd-rtrl --nb_hiddens 1024 --etrace_decay 0.98
+python main.py --model_type RadLIF --dataset_name shd --nb_epochs 100 --method esd-rtrl --nb_hiddens 1024 --etrace_decay 0.98
+```
 
