@@ -17,55 +17,69 @@ import argparse
 import os
 
 __all__ = [
-  'MyArgumentParser'
+    'MyArgumentParser'
 ]
 
 
 def _set_gpu_preallocation(mode: float):
-  """GPU memory allocation.
+    """GPU memory allocation.
 
-  If preallocation is enabled, this makes JAX preallocate ``percent`` of the total GPU memory,
-  instead of the default 75%. Lowering the amount preallocated can fix OOMs that occur when the JAX program starts.
-  """
-  assert isinstance(mode, float) and 0. <= mode < 1., f'GPU memory preallocation must be in [0., 1.]. But got {mode}.'
-  os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = str(mode)
+    If preallocation is enabled, this makes JAX preallocate ``percent`` of the total GPU memory,
+    instead of the default 75%. Lowering the amount preallocated can fix OOMs that occur when the JAX program starts.
+    """
+    assert isinstance(mode, float) and 0. <= mode < 1., (
+        f'GPU memory preallocation must '
+        f'be in [0., 1.]. But got {mode}.'
+    )
+    os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = str(mode)
 
 
 def _set_gpu_device(device_ids):
-  if isinstance(device_ids, int):
-    device_ids = str(device_ids)
-  elif isinstance(device_ids, (tuple, list)):
-    device_ids = ','.join([str(d) for d in device_ids])
-  elif isinstance(device_ids, str):
-    device_ids = device_ids
-  else:
-    raise ValueError
-  os.environ['CUDA_VISIBLE_DEVICES'] = device_ids
+    if isinstance(device_ids, int):
+        device_ids = str(device_ids)
+    elif isinstance(device_ids, (tuple, list)):
+        device_ids = ','.join([str(d) for d in device_ids])
+    elif isinstance(device_ids, str):
+        if device_ids == 'none':
+            device_ids = ''
+    else:
+        raise ValueError
+    os.environ['CUDA_VISIBLE_DEVICES'] = device_ids
 
 
 class MyArgumentParser(argparse.ArgumentParser):
-  def __init__(self, *args, gpu_pre_allocate=0.99, **kwargs):
-    super().__init__(*args, **kwargs)
-    self.add_argument('--devices', type=str, default='0', help='The GPU device ids.')
-    self.add_argument("--method", type=str, default='bptt', help="Training method.")
-    args, _ = self.parse_known_args()
-
-    # device management
-    _set_gpu_device(args.devices)
-    _set_gpu_preallocation(gpu_pre_allocate)
-
-    # training method
-    if args.method != 'bptt':
-      self.add_argument(
-        "--diag_normalize", type=int, default=0, choices=[0, 1, 2],
-        help="Normalize the diagonal jacobian (0 - None, 1 - True, 2 - False)."
-      )
-      self.add_argument(
-        "--vjp_time", type=str, default='t', choices=['t', 't_minus_1'],
-        help="The VJP time,should be t or t-1."
-      )
-      if args.method != 'diag':
+    def __init__(self, *args, gpu_pre_allocate=0.99, **kwargs):
+        super().__init__(*args, **kwargs)
         self.add_argument(
-          "--etrace_decay", type=float, default=0.9,
-          help="The time constant of eligibility trace "
+            '--devices',
+            type=str,
+            default='0',
+            help='The GPU device ids.'
         )
+        self.add_argument(
+            "--method",
+            type=str,
+            default='bptt',
+            help="Training method."
+        )
+        args, _ = self.parse_known_args()
+
+        # device management
+        _set_gpu_device(args.devices)
+        _set_gpu_preallocation(gpu_pre_allocate)
+
+        # training method
+        if args.method != 'bptt':
+            self.add_argument(
+                "--vjp_method",
+                type=str,
+                default='multi-step',
+                choices=['multi-step', 'single-step'],
+            )
+            if args.method != 'diag':
+                self.add_argument(
+                    "--etrace_decay",
+                    type=float,
+                    default=0.9,
+                    help="The time constant of eligibility trace "
+                )

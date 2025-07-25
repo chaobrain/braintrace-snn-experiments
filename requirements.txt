@@ -1,6 +1,7 @@
-brainunit
-brainstate
-brainscale
-braintools
-brainpy-dataset
-
+BrainX
+h5py
+matplotlib
+msgpack
+tonic
+torch
+#torch --index-url https://download.pytorch.org/whl/cpu

@@ -7,11 +7,10 @@
 
 For the main computation of the project, we use the following packages:
 
-- [brainunit](https://github.com/brainpy/brainunit)
-- [brainstate](https://github.com/brainpy/brainstate)
-- [brainscale](https://github.com/brainpy/brainscale)
-- [braintools](https://github.com/brainpy/braintools)
-- brainpy-dataset
+- [brainunit](https://github.com/chaobrain/brainunit)
+- [brainstate](https://github.com/chaobrain/brainstate)
+- [brainscale](https://github.com/chaobrain/brainscale)
+- [braintools](https://github.com/chaobrain/braintools)
 
 For the dataset generation, we use the following packages:
 
@@ -50,22 +49,26 @@ python task-rsnn-long-term-dependency.py --epochs 2000   --method diag --dataset
 
 
 
-## RNN long-term dependency evaluation: copying task
+## EI network for decision making tasks
 
-
-Change the sequence length using the `--data_length` argument. Here is an example of training with a sequence length of 500.
-
+ES-D-RTRL training of the EI network for decision making tasks. 
 
 ```bash
+cd ./ei_coba_net_decision_making
+python training.py --tau_neu 200 --tau_syn 10 --tau_I2 2000  --ff_scale 4.0 --rec_scale 2.0  --method esd-rtrl  --n_rec 800  --epoch_per_step 20 --diff_spike  0  --epochs 300 --lr 0.001 --etrace_decay 0.99 
+```
 
-# BPTT training for copying task
-python task-rnn-long-term-dependency.py --dataset copying --batch_size 128 --lr 1e-3 --devices 0  \
-  --dt 1.0 --method bptt --model gru  --data_length 500  --n_data_worker 10 --epochs 100000 --loss cel
+D-RTRL training of the EI network for decision making tasks. 
 
-# Diag training for copying task
-python task-rnn-long-term-dependency.py --dataset copying --batch_size 128 --lr 1e-3 --devices 1  \
-  --dt 1.0 --method diag --model gru  --data_length 500  --n_data_worker 10 --epochs 100000 --loss cel
-  
+```bash
+python training.py --tau_neu 200 --tau_syn 10 --tau_I2 2000  --ff_scale 4.0 --rec_scale 2.0  --method d-rtrl  --n_rec 800  --epoch_per_step 30 --diff_spike  0  --epochs 300 --lr 0.001
+```
+
+
+BPTT training of the EI network for decision making tasks. 
+
+```bash
+python training.py --tau_neu 200 --tau_syn 10 --tau_I2 2000  --ff_scale 4.0 --rec_scale 2.0  --method bptt  --n_rec 800  --epoch_per_step 30 --diff_spike  0  --epochs 300 --lr 0.001 
 ```
 
 
@@ -74,152 +77,107 @@ python task-rnn-long-term-dependency.py --dataset copying --batch_size 128 --lr 
 
 ```bash
 
-# BPTT
-for i in 50 100 200 300 400 600 800 1000
-do
-python task-memory-and-speed-evaluation.py --devices 0 --data_length $i --epoch 1 --n_layer 3 --n_rec 512 --method bptt --model lif-delta 
-done
-
-
-# ES-D-RTRL (IO Dim)  
-for i in 50 100 200 300 400 600 800 1000
-do
-python task-memory-and-speed-evaluation.py --devices 2 --data_length $i --epoch 1 --n_layer 3 --n_rec 512 --method expsm_diag --etrace_decay 0.9 --model lif-delta --memory_eval 1 --drop_last 1
-done
-
-
-# D-RTRL (Param Dim)
-for i in 50 100 200 300 400 600 800 1000
-do
-python task-memory-and-speed-evaluation.py --devices 2 --data_length $i --epoch 1 --n_layer 3 --n_rec 512 --method diag --model lif-delta --memory_eval 1 --drop_last 1
-done
+python task-memory-and-speed-evaluation-tpu.py
 
 ```
 
 
 
-## RSNN image classification on DVS Gesture dataset
 
-Firstly, we should preprocess the dataset using the following command:
 
+## RSNN image classification on Gesture dataset
+
+The code below is used to train a spiking neural network on the Gesture dataset using different methods (BPTT, ES-D-RTRL, D-RTRL).
+
+The codebase is located in `./event_gru_dvs_gesture` di
+
+
+BPTT
 
 ```bash
-python dvs-gesture-preprocessing.py
+python main.py --batch-size 64 --units 1024 \
+    --num-layers 1 --frame-size 128 --method bptt  \
+    --train-epochs 500 --frame-time 25 --rnn-type event-gru \
+    --learning-rate 0.001 --lr-gamma 0.9 --lr-decay-epochs 100 \
+    --event-agg-method mean --use-cnn --dropout 0.5 --zoneout 0 \
+    --pseudo-derivative-width 1.7 --threshold-mean 0.25 --augment-data \
+    --devices 0  --data ../data --cache ./cache
 ```
 
-Training based on BPTT:
+
+D-RTRL
 
 ```bash
-for i in 50 100 200 300 400 600 800 1000
-do
-python task-image-classification.py --devices 0 --dataset gesture --data_length $i --epoch 100 --n_layer 3 --n_rec 512 --method bptt --model lif-delta --exp_name test1 --warmup_ratio 0.
-done
+python main.py --batch-size 64 --units 1024 \
+    --num-layers 1 --frame-size 128 --method d-rtrl  \
+    --train-epochs 500 --frame-time 25 --rnn-type event-gru \
+    --learning-rate 0.001 --lr-gamma 0.9 --lr-decay-epochs 50 \
+    --event-agg-method mean --use-cnn --dropout 0.5 --zoneout 0 \
+    --pseudo-derivative-width 1.7 --threshold-mean 0.25 \
+    --augment-data  --data ../data --cache ./cache --devices 1
 ```
 
-Training based on ES-D-RTRL (IO Dim):
+ES-D-RTRL
 
 ```bash
-for i in 50 100 200 300 400 600 800 1000
-do
-python task-image-classification.py --devices 1 --dataset gesture --data_length $i --epoch 100 --n_layer 3 --n_rec 512 --method expsm_diag --etrace_decay 0.9 --model lif-delta --exp_name test1  --warmup_ratio 0.
-done
+python main.py --batch-size 64 --units 1024 \
+    --num-layers 1 --frame-size 128 --method es-d-rtrl --etrace-decay 0.2  \
+    --train-epochs 500 --frame-time 25 --rnn-type event-gru \
+    --learning-rate 0.001 --lr-gamma 0.9 --lr-decay-epochs 100 \
+    --event-agg-method mean --use-cnn --dropout 0.5 --zoneout 0 \
+    --pseudo-derivative-width 1.7 --threshold-mean 0.25 \
+    --augment-data  --data ../data --cache ./cache --devices 6
 ```
 
-Training based on D-RTRL (Param Dim):
+
+
+## RSNN classification on SHD dataset
+
+
+The codebase is located in `./sparch` directory. The code below is used to train a spiking neural network on the SHD dataset using different methods (BPTT, ES-D-RTRL, D-RTRL).
+
+BPTT
 
 ```bash
-for i in 50 100 200 300 400 600 800 1000
-do
-python task-image-classification.py --devices 2 --dataset gesture --data_length $i --epoch 100 --n_layer 3 --n_rec 512 --method diag --model lif-delta --exp_name test1 --warmup_ratio 0.
-done
+python main.py --model_type LIF --dataset_name shd  --nb_epochs 100 --method bptt --nb_hiddens 1024
+python main.py --model_type RLIF --dataset_name shd  --nb_epochs 100 --method bptt --nb_hiddens 1024
+python main.py --model_type adLIF --dataset_name shd --nb_epochs 100 --method bptt --nb_hiddens 1024
+python main.py --model_type RadLIF --dataset_name shd --nb_epochs 100 --method bptt --nb_hiddens 1024
 ```
 
-
-
-## RSNN image classification on N-MNIST dataset
-
+D-RTRL
 
 ```bash
-# BPTT
-python task-image-classification.py --devices 0 --dataset nmnist --data_length 400 --epoch 100 --n_layer 3 --n_rec 512 --method bptt --model lif-delta --exp_name test-nmnist --warmup_ratio 0.
-
-# ES-D-RTRL (IO Dim)
-python task-image-classification.py --devices 1 --dataset nmnist --data_length 400 --epoch 100 --n_layer 3 --n_rec 512 --method expsm_diag --etrace_decay 0.9 --model lif-delta --exp_name test-nmnist --warmup_ratio 0.
-
-# D-RTRL (Param Dim)
-python task-image-classification.py --devices 2 --dataset nmnist --data_length 400 --epoch 100 --n_layer 3 --n_rec 512 --method diag --model lif-delta --exp_name test-nmnist --warmup_ratio 0.
+python main.py --model_type LIF --dataset_name shd  --nb_epochs 100 --method d-rtrl --nb_hiddens 1024
+python main.py --model_type RLIF --dataset_name shd  --nb_epochs 100 --method d-rtrl --nb_hiddens 1024
+python main.py --model_type adLIF --dataset_name shd --nb_epochs 100 --method d-rtrl --nb_hiddens 1024
+python main.py --model_type RadLIF --dataset_name shd --nb_epochs 100 --method d-rtrl --nb_hiddens 1024
 ```
 
 
-## RSNN image classification on SHD dataset
-
+ES-D-RTRL
 
 ```bash
-# BPTT
-python task-image-classification.py --devices 0 --dataset shd --data_length 400 --epoch 100 --n_layer 3 --n_rec 512 --method bptt --model lif-delta --exp_name test-shd --warmup_ratio 0.
-
-# ES-D-RTRL (IO Dim)
-python task-image-classification.py --devices 1 --dataset shd --data_length 400 --epoch 100 --n_layer 3 --n_rec 512 --method expsm_diag --etrace_decay 0.9 --model lif-delta --exp_name test-shd --warmup_ratio 0.
-
-# D-RTRL (Param Dim)
-python task-image-classification.py --devices 2 --dataset shd --data_length 400 --epoch 100 --n_layer 3 --n_rec 512 --method diag --model lif-delta --exp_name test-shd --warmup_ratio 0.
+python main.py --model_type LIF --dataset_name shd --nb_epochs 100 --method esd-rtrl --nb_hiddens 1024 --etrace_decay 0.8
+python main.py --model_type RLIF --dataset_name shd --nb_epochs 100 --method esd-rtrl --nb_hiddens 1024 --etrace_decay 0.8
+python main.py --model_type adLIF --dataset_name shd --nb_epochs 100 --method esd-rtrl --nb_hiddens 1024 --etrace_decay 0.98
+python main.py --model_type RadLIF --dataset_name shd --nb_epochs 100 --method esd-rtrl --nb_hiddens 1024 --etrace_decay 0.98
 ```
 
+## Citations
 
-
-## Conductance-based Excitatory and Inhibitory RSNN on Evidence Accumulation Task
-
-
-```bash
-# Training with BPTT
-python task-coba-ei-rsnn.py --method bptt
-
-
-# Training with D-RTRL
-python task-coba-ei-rsnn.py --method diag
-
-python task-coba-ei-rsnn.py --tau_neu 100 --tau_syn 50 --tau_a 1500 --ff_scale 0.4 --rec_scale 0.1 --vjp_time t_minus_1
-
-
-
-# Training with ES-D-RTRL
-python task-coba-ei-rsnn.py --method expsm_diag --etrace_decay 0.98
-
-
-
-
-python task-coba-ei-rsnn.py --tau_neu 100 --tau_syn 10 --tau_a 1500 --mode sim --ff_scale 0.5 --rec_scale 0.1 
-
-
-
-
-python task-coba-ei-rsnn.py --tau_neu 100 --tau_syn 10 --tau_a 2500 --mode sim --ff_scale 10.0 --rec_scale 2. --net cuba
-
-
-
-python task-coba-ei-rsnn.py --devices 0 --tau_neu 100 --tau_syn 10 --tau_a 2500  --ff_scale 1.0 --rec_scale 0.5 --method diag --diag_normalize 0 --vjp_time t_minus_1 --n_rec 400
-
-
-python task-coba-ei-rsnn.py --devices 0 --tau_neu 100 --tau_syn 10 --tau_a 2500  --ff_scale 1.0 --rec_scale 0.5 --method expsm_diag --diag_normalize 0 --vjp_time t_minus_1 --n_rec 400
-
-
-python task-coba-ei-rsnn.py --devices 0 --tau_neu 100 --tau_syn 10 --tau_a 2500  --ff_scale 1.0 --rec_scale 0.5 --method expsm_diag --diag_normalize 0 --etrace_decay 0.98 --vjp_time t_minus_1 --n_rec 400
-python task-coba-ei-rsnn.py --devices 2 --tau_neu 100 --tau_syn 10 --tau_a 2500  --ff_scale 1.0 --rec_scale 0.5 --method expsm_diag --diag_normalize 0 --etrace_decay 0.98 --vjp_time t_minus_1 --n_rec 400
-
-python task-coba-ei-rsnn.py --devices 1 --tau_neu 100 --tau_syn 10 --tau_a 2500  --ff_scale 1.0 --rec_scale 0.5 --method diag --diag_normalize 0 --vjp_time t --n_rec 400
-
-python task-coba-ei-rsnn.py --devices 0 --tau_neu 100 --tau_syn 10 --tau_a 2500  --ff_scale 1.0 --rec_scale 0.5 --method bptt --n_rec 400
-
-
-
-
-python task-coba-ei-rsnn.py --devices 2 --tau_neu 400 --tau_syn 5 --tau_a 1500  --ff_scale 1.0 --rec_scale 0.5 --method expsm_diag --diag_normalize 0 --etrace_decay 0.98 --vjp_time t_minus_1 --n_rec 400
-
+```text
+@article {Wang2024brainscale,
+     author = {Wang, Chaoming and Dong, Xingsi and Jiang, Jiedong and Ji, Zilong and Liu, Xiao and Wu, Si},
+     title = {BrainScale: Enabling Scalable Online Learning in Spiking Neural Networks},
+     elocation-id = {2024.09.24.614728},
+     year = {2024},
+     doi = {10.1101/2024.09.24.614728},
+     publisher = {Cold Spring Harbor Laboratory},
+     abstract = {Whole-brain simulation stands as one of the most ambitious endeavors of our time, yet it remains constrained by significant technical challenges. A critical obstacle in this pursuit is the absence of a scalable online learning framework capable of supporting the efficient training of complex, diverse, and large-scale spiking neural networks (SNNs). To address this limitation, we introduce BrainScale, a framework specifically designed to enable scalable online learning in SNNs. BrainScale achieves three key advancements for scalability. (1) Model diversity: BrainScale accommodates the complex dynamics of brain function by supporting a wide spectrum of SNNs through a streamlined abstraction of synaptic interactions. (2) Efficient scaling: Leveraging SNN intrinsic characteristics, BrainScale achieves an online learning algorithm with linear memory complexity. (3) User-friendly programming: BrainScale provides a programming environment that automates the derivation and execution of online learning computations for any user-defined models. Our comprehensive evaluations demonstrate BrainScale{\textquoteright}s efficiency and robustness, showing a hundred-fold improvement in memory utilization and several-fold acceleration in training speed while maintaining performance on long-term dependency tasks and neuromorphic datasets. These results suggest that BrainScale represents a crucial step towards brain-scale SNN training and whole-brain simulation.Competing Interest StatementThe authors have declared no competing interest.},
+     URL = {https://www.biorxiv.org/content/early/2024/09/24/2024.09.24.614728},
+     eprint = {https://www.biorxiv.org/content/early/2024/09/24/2024.09.24.614728.full.pdf},
+     journal = {bioRxiv}
+}
 ```
-
-
-
-
-
-
 
