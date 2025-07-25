@@ -27,7 +27,10 @@ def _set_gpu_preallocation(mode: float):
     If preallocation is enabled, this makes JAX preallocate ``percent`` of the total GPU memory,
     instead of the default 75%. Lowering the amount preallocated can fix OOMs that occur when the JAX program starts.
     """
-    assert isinstance(mode, float) and 0. <= mode < 1., f'GPU memory preallocation must be in [0., 1.]. But got {mode}.'
+    assert isinstance(mode, float) and 0. <= mode < 1., (
+        f'GPU memory preallocation must '
+        f'be in [0., 1.]. But got {mode}.'
+    )
     os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = str(mode)
 
 
@@ -37,7 +40,8 @@ def _set_gpu_device(device_ids):
     elif isinstance(device_ids, (tuple, list)):
         device_ids = ','.join([str(d) for d in device_ids])
     elif isinstance(device_ids, str):
-        device_ids = device_ids
+        if device_ids == 'none':
+            device_ids = ''
     else:
         raise ValueError
     os.environ['CUDA_VISIBLE_DEVICES'] = device_ids
@@ -46,8 +50,18 @@ def _set_gpu_device(device_ids):
 class MyArgumentParser(argparse.ArgumentParser):
     def __init__(self, *args, gpu_pre_allocate=0.99, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_argument('--devices', type=str, default='0', help='The GPU device ids.')
-        self.add_argument("--method", type=str, default='bptt', help="Training method.")
+        self.add_argument(
+            '--devices',
+            type=str,
+            default='0',
+            help='The GPU device ids.'
+        )
+        self.add_argument(
+            "--method",
+            type=str,
+            default='bptt',
+            help="Training method."
+        )
         args, _ = self.parse_known_args()
 
         # device management
@@ -57,11 +71,15 @@ class MyArgumentParser(argparse.ArgumentParser):
         # training method
         if args.method != 'bptt':
             self.add_argument(
-                "--vjp_time", type=str, default='t', choices=['t', 't_minus_1'],
-                help="The VJP time,should be t or t-1."
+                "--vjp_method",
+                type=str,
+                default='multi-step',
+                choices=['multi-step', 'single-step'],
             )
             if args.method != 'diag':
                 self.add_argument(
-                    "--etrace_decay", type=float, default=0.9,
+                    "--etrace_decay",
+                    type=float,
+                    default=0.9,
                     help="The time constant of eligibility trace "
                 )

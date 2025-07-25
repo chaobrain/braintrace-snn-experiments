@@ -69,7 +69,8 @@ def resume_model(
 class Trainer(brainstate.util.PrettyObject):
     def __init__(self, args):
         self.args = args
-        brainstate.random.seed(self.args.seed)
+        if self.args.seed is not None:
+            brainstate.random.seed(self.args.seed)
 
         # tensorboard
         filename = f'./dvs_gesture-{self.args.rnn_type}-{self.args.num_layers}-{self.args.method}'
@@ -93,7 +94,6 @@ class Trainer(brainstate.util.PrettyObject):
             n_rnn_hidden=args.units,
             n_class=len(tonic.datasets.DVSGesture.classes),
             zoneout=args.zoneout,
-            dropconnect=args.dropconnect,
             layer_dropout=args.dropout,
             pseudo_derivative_width=args.pseudo_derivative_width,
             threshold_mean=args.threshold_mean,
@@ -221,12 +221,7 @@ class Trainer(brainstate.util.PrettyObject):
 
         def _etrace_step(prev_grads, x):
             # no need to return weights and states, since they are generated then no longer needed
-            f_grad = brainstate.augment.grad(
-                _etrace_grad,
-                self.trainable_weights,
-                has_aux=True,
-                return_value=True
-            )
+            f_grad = brainstate.augment.grad(_etrace_grad, self.trainable_weights, has_aux=True, return_value=True)
             cur_grads, local_loss, out = f_grad(x)
             next_grads = jax.tree.map(lambda a, b: a + b, prev_grads, cur_grads)
             return next_grads, (out, local_loss)
@@ -236,9 +231,9 @@ class Trainer(brainstate.util.PrettyObject):
             grads = jax.tree.map(lambda a: jnp.zeros_like(a), self.trainable_weights.to_dict_values())
             grads, (outs, losses) = brainstate.compile.scan(_etrace_step, grads, inputs_)
             # gradient updates
-            grads = brainstate.functional.clip_grad_norm(grads, 1.)
+            if self.args.use_grad_clipping:
+                grads = brainstate.functional.clip_grad_norm(grads, self.args.grad_clip_norm)
             self.optimizer.update(grads)
-            # accuracy
             return losses.mean(), outs
 
         # running indices
@@ -283,14 +278,11 @@ class Trainer(brainstate.util.PrettyObject):
 
         # gradients
         grads, loss, outs = brainstate.augment.grad(
-            _bptt_grad_step,
-            self.trainable_weights,
-            has_aux=True,
-            return_value=True
-        )()
+            _bptt_grad_step, self.trainable_weights, has_aux=True, return_value=True)()
 
         # optimization
-        grads = brainstate.functional.clip_grad_norm(grads, 1.)
+        if self.args.use_grad_clipping:
+            grads = brainstate.functional.clip_grad_norm(grads, self.args.grad_clip_norm)
         self.optimizer.update(grads)
 
         # firing rate

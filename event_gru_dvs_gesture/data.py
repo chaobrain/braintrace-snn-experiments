@@ -28,17 +28,17 @@ num_worker = 0 if platform.system() == 'Windows' else 10
 
 
 def get_dvs128_train_val(
-    opt,
+    args,
     split: float = 0.85,
     augmentation: bool = False
 ):
     """
     Make dataloaders for train and validation sets
     """
-    transform, tr_str = get_transforms(opt)
+    transform, tr_str = get_transforms(args)
 
     dataset = tonic.datasets.DVSGesture(
-        save_to=os.path.join(opt.data, 'train'),
+        save_to=os.path.join(args.data, 'train'),
         train=True,
         transform=None,
         target_transform=None
@@ -52,7 +52,7 @@ def get_dvs128_train_val(
 
     min_time_window = 1.7 * 1e6  # 1.7 s
     overlap = 0
-    metadata_path = f'_{min_time_window}_{overlap}_{opt.frame_time}_' + tr_str
+    metadata_path = f'_{min_time_window}_{overlap}_{args.frame_time}_' + tr_str
     slicer_by_time = SliceByTime(
         time_window=min_time_window,
         overlap=overlap,
@@ -71,7 +71,7 @@ def get_dvs128_train_val(
         metadata_path=None
     )
 
-    if opt.event_agg_method == 'none' or opt.event_agg_method == 'mean':
+    if args.event_agg_method == 'none' or args.event_agg_method == 'mean':
         data_max = 19.0  # commented to save time, re calculate if min_time_window changes
         print(f'Max train value: {data_max}')
         norm_transform = lambda x: x / data_max
@@ -98,18 +98,18 @@ def get_dvs128_train_val(
     train_cached_dataset = DiskCachedDataset(
         train_dataset_timesliced,
         transform=post_cache_transform,
-        cache_path=os.path.join(opt.cache, 'diskcache_train' + metadata_path)
+        cache_path=os.path.join(args.cache, 'diskcache_train' + metadata_path)
     )
 
     val_cached_dataset = DiskCachedDataset(
         val_dataset_timesliced,
         transform=post_cache_transform,
-        cache_path=os.path.join(opt.cache, 'diskcache_val' + metadata_path)
+        cache_path=os.path.join(args.cache, 'diskcache_val' + metadata_path)
     )
 
     train_dataset = DataLoader(
         train_cached_dataset,
-        batch_size=opt.batch_size,
+        batch_size=args.batch_size,
         shuffle=True,
         collate_fn=tonic.collation.PadTensors(batch_first=False),
         drop_last=True,
@@ -117,7 +117,7 @@ def get_dvs128_train_val(
     )
     val_dataset = DataLoader(
         val_cached_dataset,
-        batch_size=opt.batch_size,
+        batch_size=args.batch_size,
         collate_fn=tonic.collation.PadTensors(batch_first=False),
         drop_last=True,
     )
@@ -128,13 +128,13 @@ def get_dvs128_train_val(
     return train_dataset, val_dataset
 
 
-def get_dvs128_test_dataset(opt):
+def get_dvs128_test_dataset(args):
     """ Make dataloaders for test set
     """
-    transform, tr_str = get_transforms(opt)
+    transform, tr_str = get_transforms(args)
 
     test_dataset = tonic.datasets.DVSGesture(
-        save_to=os.path.join(opt.data, 'test'),
+        save_to=os.path.join(args.data, 'test'),
         train=False,
         transform=None,
         target_transform=None
@@ -148,7 +148,7 @@ def get_dvs128_test_dataset(opt):
         include_incomplete=False
     )
     # os.makedirs(os.path.join(opt.cache, 'test'), exist_ok=True)
-    metadata_path = f'_{min_time_window}_{overlap}_{opt.frame_time}_' + tr_str
+    metadata_path = f'_{min_time_window}_{overlap}_{args.frame_time}_' + tr_str
     test_dataset_timesliced = SlicedDataset(
         test_dataset,
         slicer=slicer_by_time,
@@ -156,8 +156,8 @@ def get_dvs128_test_dataset(opt):
         metadata_path=None
     )
 
-    if opt.event_agg_method == 'none' or opt.event_agg_method == 'mean':
-        data_max = 18.5  # commented to save time, re calculate if min_time_window changes
+    if args.event_agg_method == 'none' or args.event_agg_method == 'mean':
+        data_max = 19.5  # commented to save time, re calculate if min_time_window changes
         print(f'Max test value: {data_max}')
         norm_transform = torchvision.transforms.Lambda(lambda x: x / data_max)
     else:
@@ -166,11 +166,11 @@ def get_dvs128_test_dataset(opt):
     cached_test_dataset_time = DiskCachedDataset(
         test_dataset_timesliced,
         transform=norm_transform,
-        cache_path=os.path.join(opt.cache, 'diskcache_test' + metadata_path)
+        cache_path=os.path.join(args.cache, 'diskcache_test' + metadata_path)
     )
     cached_test_dataloader_time = DataLoader(
         cached_test_dataset_time,
-        batch_size=opt.batch_size,
+        batch_size=args.batch_size,
         collate_fn=tonic.collation.PadTensors(batch_first=False),
         drop_last=False,
         num_workers=num_worker,
@@ -182,11 +182,11 @@ def get_dvs128_test_dataset(opt):
     return cached_test_dataloader_time
 
 
-def get_transforms(opt):
+def get_transforms(args):
     sensor_size = tonic.datasets.DVSGesture.sensor_size
     frame_transform_time = tonic.transforms.ToFrame(
         sensor_size=sensor_size,
-        time_window=opt.frame_time * 1000,
+        time_window=args.frame_time * 1000,
         include_incomplete=False
     )
     return frame_transform_time, 'toframe'

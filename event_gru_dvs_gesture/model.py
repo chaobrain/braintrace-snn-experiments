@@ -2,13 +2,14 @@
 Gated Recurrent Unit
 """
 
-from typing import Callable, Union
+from typing import Callable, Union, Optional
 
 import brainscale
 import brainstate
 import brainunit as u
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 __all__ = [
     'FiringRateState',
@@ -73,6 +74,72 @@ class SpikeFunction(brainstate.surrogate.Surrogate):
         return dz_du
 
 
+Initializer = Union[Callable, brainstate.typing.ArrayLike]
+
+
+class LinearDropConn(brainstate.nn.Module):
+    def __init__(
+        self,
+        in_size: brainstate.typing.Size,
+        out_size: brainstate.typing.Size,
+        w_init: Initializer = brainstate.init.KaimingNormal(),
+        b_init: Optional[Initializer] = brainstate.init.ZeroInit(),
+        name: Optional[str] = None,
+        param_type: type = brainscale.ETraceParam,
+        drop_conn_rate: float = 0.0,
+        drop_conn_part: str = 'all'
+    ):
+        super().__init__(name=name)
+
+        # input and output shape
+        self.in_size = in_size
+        self.out_size = out_size
+        self.drop_conn_rate = drop_conn_rate
+        self.drop_conn_part = drop_conn_part
+        assert 0. <= drop_conn_rate <= 1., 'drop_conn_rate must be in [0.0, 1.0]'
+
+        # weights
+        w_shape = (self.in_size[-1], self.out_size[-1])
+        b_shape = (self.out_size[-1],)
+        params = dict(weight=brainstate.init.param(w_init, w_shape, allow_none=False))
+        if b_init is not None:
+            params['bias'] = brainstate.init.param(b_init, b_shape, allow_none=False)
+
+        # weight + op
+        self.weight_op = param_type(params, op=brainscale.MatMulOp(weight_fn=self.weight_fn))
+
+    def weight_fn(self, weight):
+        fit = brainstate.environ.get('fit')
+        if self.drop_conn_rate > 0.0 and fit:
+            if self.drop_conn_part == 'all':
+                weight = self.dropout(weight)
+            else:
+                left, right = u.math.split(weight, 2, axis=-1)
+                if self.drop_conn_part == 'left':
+                    left = self.dropout(left)
+                elif self.drop_conn_part == 'right':
+                    right = self.dropout(right)
+                else:
+                    raise ValueError(f"Unknown drop_conn_part: {self.drop_conn_part}")
+                weight = u.math.concatenate([left, right], axis=-1)
+        return weight
+
+    def update(self, x):
+        return self.weight_op.execute(x)
+
+    def dropout(self, x):
+        key = jax.pure_callback(
+            lambda: np.random.random_integers(0, 100000, 2).astype(np.uint32),
+            jax.ShapeDtypeStruct([2], np.uint32)
+        )
+        keep_mask = jax.random.bernoulli(key, self.drop_conn_rate, x.shape)
+        return u.math.where(
+            keep_mask,
+            u.math.asarray(x / self.drop_conn_rate, dtype=x.dtype),
+            u.math.asarray(0., dtype=x.dtype)
+        )
+
+
 class EGRU(brainstate.nn.Module):
     r"""
     Event based Gated Recurrent Unit layer [1]_.
@@ -131,7 +198,6 @@ class EGRU(brainstate.nn.Module):
         self,
         input_size: brainstate.typing.Size,
         hidden_size: brainstate.typing.Size,
-        dropout_prob: float = 0.0,
         zoneout_prob: float = 0.0,
         thr_mean: float = 0.3,
         w_init: Union[brainstate.typing.ArrayLike, Callable] = brainstate.init.XavierNormal(),
@@ -139,34 +205,20 @@ class EGRU(brainstate.nn.Module):
         state_init: Union[brainstate.typing.ArrayLike, Callable] = brainstate.init.ZeroInit(),
         param_type: Callable = brainscale.ETraceParam,
         spk_fun: Callable = SpikeFunction(dampening_factor=0.7, pseudo_derivative_support=1.0),
+        include_trace: bool = False,
     ):
-        """
-        Initialize the parameters of the GRU layer.
-
-        Arguments:
-          input_size: int, the feature dimension of the input.
-          hidden_size: int, the feature dimension of the output.
-          dropout_prob: (optional) float, sets the dropout rate for DropConnect
-            regularization on the recurrent matrix.
-          zoneout_prob: (optional) float, sets the zoneout rate for Zoneout
-            regularization.
-          grad_clip: (optional) float, sets the gradient clipping value.
-
-        """
         super().__init__()
 
         self.in_size = input_size
         self.out_size = hidden_size
+        self.include_trace = include_trace
 
         assert callable(spk_fun), 'GRU: spike_fun must be a callable'
         self.spk_fun = spk_fun
 
-        assert 0 <= dropout_prob <= 1, 'GRU: dropout_prob must be in [0.0, 1.0]'
         assert 0 <= zoneout_prob <= 1, 'GRU: zoneout_prob must be in [0.0, 1.0]'
         self.zoneout_prob = zoneout_prob
-        self.dropout_prob = dropout_prob
         self.zoneout = brainstate.nn.Dropout(1. - self.zoneout_prob)
-        self.dropout = brainstate.nn.Dropout(1. - self.dropout_prob)
 
         self.alpha = 0.9
         self.state_init = state_init
@@ -174,9 +226,21 @@ class EGRU(brainstate.nn.Module):
         # parameters
         params = dict(w_init=w_init, b_init=b_init, param_type=param_type)
         self.Wz = brainscale.nn.Linear(self.in_size[-1] + self.out_size[-1], self.out_size[-1], **params)
+        # self.Wz = LinearDropConn(self.in_size[-1] + self.out_size[-1], self.out_size[-1],
+        #                          drop_conn_rate=dropconn_prob,
+        #                          drop_conn_part='right',
+        #                          **params)
         self.Wr = brainscale.nn.Linear(self.in_size[-1] + self.out_size[-1], self.out_size[-1], **params)
+        # self.Wr = LinearDropConn(self.in_size[-1] + self.out_size[-1], self.out_size[-1],
+        #                          drop_conn_rate=dropconn_prob,
+        #                          drop_conn_part='right',
+        #                          **params)
         self.Whx = brainscale.nn.Linear(self.in_size[-1], self.out_size[-1], **params)
         self.Whr = brainscale.nn.Linear(self.out_size[-1], self.out_size[-1], **params)
+        # self.Whr = LinearDropConn(self.out_size[-1], self.out_size[-1],
+        #                           drop_conn_rate=dropconn_prob,
+        #                           drop_conn_part='all',
+        #                           **params)
 
         # initialize thresholds according to the beta distribution with mean 'thr_mean'
         assert 0 < thr_mean < 1, f"thr_mean must be between 0 and 1, but {thr_mean} was given"
@@ -198,43 +262,22 @@ class EGRU(brainstate.nn.Module):
         # internal state variable
         self.y = brainscale.ETraceState(brainstate.init.param(self.state_init, self.out_size, batch_size))
 
-        # smoothed output values, can be beneficial for training.
-        self.tr = brainscale.ETraceState(brainstate.init.param(self.state_init, self.out_size, batch_size))
-
         # # firing rate
         self.fr = FiringRateState(brainstate.init.param(brainstate.init.ZeroInit(), self.out_size, batch_size))
+
+        # smoothed output values, can be beneficial for training.
+        if self.include_trace:
+            self.tr = brainscale.ETraceState(brainstate.init.param(self.state_init, self.out_size, batch_size))
 
     def reset_state(self, batch_size: int = None, **kwargs):
         self.h.value = brainstate.init.param(self.state_init, self.out_size, batch_size)
         self.o.value = brainstate.init.param(self.state_init, self.out_size, batch_size)
         self.y.value = brainstate.init.param(self.state_init, self.out_size, batch_size)
-        self.tr.value = brainstate.init.param(self.state_init, self.out_size, batch_size)
         self.fr.value = brainstate.init.param(brainstate.init.ZeroInit(), self.out_size, batch_size)
+        if self.include_trace:
+            self.tr.value = brainstate.init.param(self.state_init, self.out_size, batch_size)
 
     def update(self, x):
-        """
-        Runs a forward pass of the EGRU layer.
-
-        Arguments:
-          inputs: Tensor, a batch of input sequences to pass through the GRU.
-            Dimensions (seq_len, batch_size, input_size) if `batch_first` is
-            `False`, otherwise (batch_size, seq_len, input_size).
-
-        Returns:
-          output: Tensor, the output of the EGRU layer. Dimensions
-            (seq_len, batch_size, hidden_size) if `batch_first` is `False` (default)
-            or (batch_size, seq_len, hidden_size) if `batch_first` is `True`. Note
-            that if `lengths` was specified, the `output` tensor will not be
-            masked. It's the caller's responsibility to either not use the invalid
-            entries or to mask them out before using them.
-          h: the hidden state for all sequences. Dimensions
-            (seq_len, batch_size, hidden_size).
-          o: the output gate for all sequences (values: 0 or 1).
-          trace: smoothed output values, can be beneficial for training.
-
-        """
-        fit = brainstate.environ.get('fit')
-
         old_h = self.h.value
         xh = u.math.concatenate([x, old_h], axis=-1)
         z = u.math.sigmoid(self.Wz(xh))
@@ -242,10 +285,11 @@ class EGRU(brainstate.nn.Module):
         g = u.math.tanh(self.Whx(x) + self.Whr(old_h) * r)
         cur_h = z * old_h + (1 - z) * g
         if self.zoneout_prob > 0.0:
+            fit = brainstate.environ.get('fit')
             if fit:
                 cur_h = self.zoneout(cur_h - old_h) + old_h
             else:
-                cur_h = self.zoneout_prob * cur_h + (1 - self.zoneout_prob) * old_h
+                cur_h = self.zoneout_prob * cur_h + (1. - self.zoneout_prob) * old_h
 
         thr = self.thr.execute()
         event = self.spk_fun(cur_h - thr)
@@ -253,9 +297,11 @@ class EGRU(brainstate.nn.Module):
         self.o.value = event
         self.h.value = cur_h - event * thr
         self.y.value = event * cur_h
-        self.tr.value = self.alpha * self.tr.value + (1 - self.alpha) * self.y.value
-        self.fr.value = self.fr.value + event
-        return self.tr.value
+        if self.include_trace:
+            self.tr.value = self.alpha * self.tr.value + (1. - self.alpha) * self.y.value
+
+        self.fr.value = self.fr.value + event  # firing rate count
+        return self.tr.value if self.include_trace else self.y.value
 
 
 class MergeEvents(brainstate.nn.Module):
@@ -376,7 +422,6 @@ class Network(brainstate.nn.Module):
         n_rnn_hidden: int,
         n_class: int,
         zoneout: float = 0.0,
-        dropconnect: float = 0.0,
         layer_dropout: float = 0.0,
         pseudo_derivative_width: float = 1.7,
         threshold_mean: float = 0.2465,
@@ -389,12 +434,11 @@ class Network(brainstate.nn.Module):
         # parameters
         self.input_size = input_size
         self.frame_size = frame_size
-        self.num_layers = n_rnn_layer
+        self.n_rnn_layer = n_rnn_layer
         self.use_cnn = use_cnn
         self.rnn_type = rnn_type
         self.event_agg_method = event_agg_method
-        self.hidden_dim = n_rnn_hidden
-        self.dropconnect = dropconnect
+        self.n_rnn_hidden = n_rnn_hidden
         self.zoneout = zoneout
         self.layer_dropout = layer_dropout
 
@@ -403,9 +447,7 @@ class Network(brainstate.nn.Module):
             brainscale.nn.MaxPool2d(in_size=input_size, kernel_size=128 // frame_size),
             MergeEvents.desc(method=event_agg_method, flatten=not use_cnn),
         )
-        # print('pool outsize = ', self.pool.out_size)
 
-        # cnn layers
         if self.use_cnn:
             self.cnn = brainstate.nn.Sequential(
                 brainscale.nn.Conv2d(self.pool.out_size, out_channels=64, kernel_size=11, stride=4, padding=2),
@@ -439,56 +481,35 @@ class Network(brainstate.nn.Module):
                 ),
             )
         else:
-            self.cnn = brainscale.nn.Flatten()
+            self.cnn = brainscale.nn.Flatten(in_size=self.pool.out_size)
 
-        # rnn layers
         rnn_layers = []
-        input_size = self.cnn.out_size if self.use_cnn else self.pool.out_size
+        input_size = self.cnn.out_size
         for layer_idx in range(n_rnn_layer):
             if self.rnn_type == 'lstm':
-                rnn = brainscale.nn.LSTMCell(input_size, self.hidden_dim)
-
+                rnn = brainscale.nn.LSTMCell(input_size, self.n_rnn_hidden)
             elif self.rnn_type == 'gru':
-                rnn = brainscale.nn.GRUCell(input_size, self.hidden_dim)
-
+                rnn = brainscale.nn.GRUCell(input_size, self.n_rnn_hidden)
             elif self.rnn_type == 'event-gru':
                 rnn = EGRU(
                     input_size,
-                    self.hidden_dim,
-                    dropout_prob=dropconnect,
+                    self.n_rnn_hidden,
                     zoneout_prob=zoneout,
-                    spk_fun=SpikeFunction(
-                        dampening_factor=0.7,
-                        pseudo_derivative_support=pseudo_derivative_width
-                    ),
+                    spk_fun=SpikeFunction(dampening_factor=0.7, pseudo_derivative_support=pseudo_derivative_width),
                     thr_mean=threshold_mean,
+                    include_trace=(layer_idx == n_rnn_layer - 1),
                 )
-
             else:
                 raise RuntimeError("Unknown lstm type: %s" % self.rnn_type)
-            input_size = rnn.out_size
             rnn_layers.append(rnn)
-            if self.layer_dropout > 0.:
-                rnn_layers.append(brainscale.nn.Dropout(1 - self.layer_dropout))
-        self.rnn = brainstate.nn.Sequential(*rnn_layers)
 
-        # fully connected readout layer
-        self.fc = brainscale.nn.Linear(self.hidden_dim, n_class)
+            input_size = rnn.out_size
+            # if self.layer_dropout > 0. and layer_idx + 1 < n_rnn_layer:
+            #     rnn_layers.append(brainscale.nn.Dropout(1 - self.layer_dropout))
+        self.rnn = brainstate.nn.Sequential(*rnn_layers)
+        self.fc = brainscale.nn.Linear(self.n_rnn_hidden, n_class)
 
     def update(self, x):
-        """
-        Perform a forward pass through the network.
-
-        Parameters:
-        -----------
-        x : tensor
-            The input tensor to the network.
-
-        Returns:
-        --------
-        tensor
-            The output of the network after passing through all layers.
-        """
         x = self.pool(x)
         x = self.cnn(x)
         x = self.rnn(x)

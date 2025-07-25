@@ -294,3 +294,5 @@ cython_debug/
 /event_gru_dvs_gesture/logs/
 /vgg_gesture/experiments/
 /event_gru_dvs_gesture/analysis.py
+/event_gru_dvs_gesture/results/
+/event_gru_dvs_gesture/new_results/
