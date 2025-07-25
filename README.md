@@ -49,89 +49,16 @@ python task-rsnn-long-term-dependency.py --epochs 2000   --method diag --dataset
 
 
 
-## RNN long-term dependency evaluation: copying task
-
-
-Change the sequence length using the `--data_length` argument. Here is an example of training with a sequence length of 500.
-
-
-```bash
-
-# BPTT training for copying task
-python task-rnn-long-term-dependency.py --dataset copying --batch_size 128 --lr 1e-3 --devices 0  \
-  --dt 1.0 --method bptt --model gru  --data_length 500  --n_data_worker 10 --epochs 100000 --loss cel
-
-# Diag training for copying task
-python task-rnn-long-term-dependency.py --dataset copying --batch_size 128 --lr 1e-3 --devices 1  \
-  --dt 1.0 --method diag --model gru  --data_length 500  --n_data_worker 10 --epochs 100000 --loss cel
-  
-```
-
-
 ## Memory and speed evaluation
 
 
 ```bash
 
-# BPTT
-for i in 50 100 200 300 400 600 800 1000
-do
-python task-memory-and-speed-evaluation.py --devices 0 --data_length $i --epoch 1 --n_layer 3 --n_rec 512 --method bptt --model lif-delta 
-done
-
-
-# ES-D-RTRL (IO Dim)  
-for i in 50 100 200 300 400 600 800 1000
-do
-python task-memory-and-speed-evaluation.py --devices 2 --data_length $i --epoch 1 --n_layer 3 --n_rec 512 --method expsm_diag --etrace_decay 0.9 --model lif-delta --memory_eval 1 --drop_last 1
-done
-
-
-# D-RTRL (Param Dim)
-for i in 50 100 200 300 400 600 800 1000
-do
-python task-memory-and-speed-evaluation.py --devices 2 --data_length $i --epoch 1 --n_layer 3 --n_rec 512 --method diag --model lif-delta --memory_eval 1 --drop_last 1
-done
+python task-memory-and-speed-evaluation-tpu.py
 
 ```
 
 
-
-## RSNN image classification on DVS Gesture dataset
-
-Firstly, we should preprocess the dataset using the following command:
-
-
-```bash
-python data-preprocessing.py
-```
-
-Training based on BPTT:
-
-```bash
-for i in 50 100 200 300 400 600 800 1000
-do
-python task-image-classification.py --devices 0 --dataset gesture --data_length $i --epoch 100 --n_layer 3 --n_rec 512 --method bptt --model lif-delta --exp_name test1 --warmup_ratio 0.
-done
-```
-
-Training based on ES-D-RTRL (IO Dim):
-
-```bash
-for i in 50 100 200 300 400 600 800 1000
-do
-python task-image-classification.py --devices 1 --dataset gesture --data_length $i --epoch 100 --n_layer 3 --n_rec 512 --method expsm_diag --etrace_decay 0.9 --model lif-delta --exp_name test1  --warmup_ratio 0.
-done
-```
-
-Training based on D-RTRL (Param Dim):
-
-```bash
-for i in 50 100 200 300 400 600 800 1000
-do
-python task-image-classification.py --devices 2 --dataset gesture --data_length $i --epoch 100 --n_layer 3 --n_rec 512 --method diag --model lif-delta --exp_name test1 --warmup_ratio 0.
-done
-```
 
 
 

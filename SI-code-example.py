@@ -13,13 +13,12 @@
 # limitations under the License.
 # ==============================================================================
 
-import brainscale
 import brainstate
 import braintools
 import jax
 import jax.numpy as jnp
 
-brainstate.environ.set(dt=1.0)
+import brainscale
 
 
 class Linear(brainstate.nn.Module):
@@ -100,10 +99,6 @@ class LIF(brainstate.nn.Neuron):
 
 
 class LIF_Delta_Net(brainstate.nn.Module):
-    """
-    The network with LIF neurons and dense connected with delta synapses.
-    """
-
     def __init__(
         self,
         n_in: int,
@@ -124,6 +119,8 @@ class LIF_Delta_Net(brainstate.nn.Module):
             return self.out(self.neu())
 
 
+brainstate.environ.set(dt=1.0)
+
 # define the one-batch inputs and targets
 n_seq = 512
 inputs = brainstate.random.rand(n_seq, 10) < 0.1
@@ -136,9 +133,9 @@ brainstate.nn.init_all_states(net)
 # online learning algorithm
 method = 'es-diag'  # or 'diag', 'hybrid'
 if method == 'es-diag':
-    model = brainscale.IODimVjpAlgorithm(net, decay_or_rank=0.98)
+    model = brainscale.ES_D_RTRL(net, decay_or_rank=0.98)
 elif method == 'diag':
-    model = brainscale.ParamDimVjpAlgorithm(net)
+    model = brainscale.D_RTRL(net)
 elif method == 'hybrid':
     model = brainscale.HybridDimVjpAlgorithm(net, decay_or_rank=0.98)
 else:
