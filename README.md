@@ -55,7 +55,7 @@ ES-D-RTRL training of the EI network for decision making tasks.
 
 ```bash
 cd ./ei_coba_net_decision_making
-python training.py --tau_neu 200 --tau_syn 10 --tau_I2 2000  --ff_scale 4.0 --rec_scale 2.0  --method esd-rtrl  --n_rec 800  --epoch_per_step 20 --diff_spike  0  --epochs 300 --lr 0.001 --etrace_decay 0.99 
+python training.py --tau_neu 200 --tau_syn 10 --tau_I2 2000  --ff_scale 4.0 --rec_scale 2.0  --method esd-rtrl  --n_rec 800  --epoch_per_step 20 --diff_spike  0  --epochs 300 --lr 0.001 --etrace_decay 0.9
 ```
 
 D-RTRL training of the EI network for decision making tasks. 
