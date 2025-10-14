@@ -26,8 +26,8 @@ class Linear(brainstate.nn.Module):
         self,
         n_in: int,
         n_out: int,
-        w_init=brainstate.init.KaimingNormal(),
-        b_init=brainstate.init.ZeroInit()
+        w_init=braintools.init.KaimingNormal(),
+        b_init=braintools.init.ZeroInit()
     ):
         super().__init__()
         self.in_size = (n_in,)
@@ -43,7 +43,7 @@ class Linear(brainstate.nn.Module):
         return self.weight_op.execute(x)
 
 
-class LIF(brainstate.nn.Neuron):
+class LIF(brainpy.state.Neuron):
     def __init__(
         self,
         in_size,
@@ -51,7 +51,7 @@ class LIF(brainstate.nn.Neuron):
         V_th: float = 1.,
         V_reset: float = 0.,
         V_rest: float = 0.,
-        spk_fun=brainstate.surrogate.ReluGrad(),
+        spk_fun=braintools.surrogate.ReluGrad(),
         spk_reset='soft'
     ):
         super().__init__(in_size, spk_fun=spk_fun, spk_reset=spk_reset)
@@ -72,7 +72,7 @@ class LIF(brainstate.nn.Neuron):
         # initialize the membrane potential
         bs = () if batch_size is None else (batch_size,)
         V = jax.numpy.full(bs + self.varshape, self.V_rest)
-        self.V = brainscale.ETraceState(V)
+        self.V = brainstate.HiddenState(V)
 
     def get_spike(self, V=None):
         V = self.V.value if V is None else V
@@ -109,7 +109,7 @@ class LIF_Delta_Net(brainstate.nn.Module):
     ):
         super().__init__()
         self.neu = LIF(n_rec, tau=tau_mem, V_th=V_th)
-        self.syn = brainstate.nn.DeltaProj(comm=Linear(n_in + n_rec, n_rec), post=self.neu)
+        self.syn = brainpy.state.DeltaProj(comm=Linear(n_in + n_rec, n_rec), post=self.neu)
         self.out = brainscale.nn.LeakyRateReadout(n_rec, n_out, tau=5.0)
 
     def update(self, i, spk):

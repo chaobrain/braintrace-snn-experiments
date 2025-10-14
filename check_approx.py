@@ -249,7 +249,7 @@ def align_pre_visualize_x_binomial_df_normal(r=10000, m=10, n=10):
     all_b_scale = np.linspace(0.1, 100., 200)
     all_p2, all_b_scale2 = np.meshgrid(all_p, all_b_scale, indexing='ij')
 
-    exp_results, thy_results = brainstate.compile.for_loop(sample, all_p2.flatten(), all_b_scale2.flatten())
+    exp_results, thy_results = brainstate.transform.for_loop(sample, all_p2.flatten(), all_b_scale2.flatten())
     exp_results = np.asarray(exp_results.reshape(all_p2.shape))
     thy_results = np.asarray(thy_results.reshape(all_p2.shape))
 

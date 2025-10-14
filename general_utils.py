@@ -21,11 +21,11 @@ import logging
 import os
 import shutil
 import sys
-import numpy as np
-import matplotlib.pyplot as plt
 
 import brainstate
 import braintools
+import matplotlib.pyplot as plt
+import numpy as np
 
 
 def _set_gpu_preallocation(mode: float):
@@ -51,11 +51,17 @@ def _set_gpu_device(device_ids):
 
 
 class MyArgumentParser(argparse.ArgumentParser):
-    def __init__(self, *args, gpu_pre_allocate=0.99, **kwargs):
+    def __init__(
+        self,
+        *args,
+        gpu_pre_allocate=0.99,
+        device='0',
+        method='bptt',
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
-        self.add_argument('--devices', type=str, default='0', help='The GPU device ids.')
-        self.add_argument("--method", type=str, default='bptt', help="Training method.",
-                          choices=['bptt', 'd-rtrl', 'esd-rtrl'])
+        self.add_argument('--devices', type=str, default=device, help='The GPU device ids.')
+        self.add_argument("--method", type=str, default=method, choices=['bptt', 'd-rtrl', 'esd-rtrl'])
         args, _ = self.parse_known_args()
 
         # device management
@@ -64,13 +70,10 @@ class MyArgumentParser(argparse.ArgumentParser):
 
         # training method
         if args.method != 'bptt':
-            self.add_argument("--vjp_method", type=str, default='multi-step',
-                              choices=['multi-step', 'single-step'])
+            self.add_argument("--vjp_method", type=str, default='multi-step', choices=['multi-step', 'single-step'])
             if args.method != 'd-rtrl':
-                self.add_argument(
-                    "--etrace_decay", type=float, default=0.99,
-                    help="The time constant of eligibility trace "
-                )
+                self.add_argument("--etrace_decay", type=float, default=0.99,
+                                  help="The time constant of eligibility trace.")
 
 
 def copy_files(tar_dir, dest_dir):
@@ -82,7 +85,7 @@ def copy_files(tar_dir, dest_dir):
 def save_model_states(
     save_path: str,
     model: brainstate.nn.Module,
-    optimizer: brainstate.optim.Optimizer = None,
+    optimizer: braintools.optim.Optimizer = None,
     **kwargs
 ):
     """
@@ -95,7 +98,7 @@ def save_model_states(
     -----------
     model : brainstate.nn.Module
         The neural network model whose state is to be saved.
-    optimizer : brainstate.optim.Optimizer
+    optimizer : braintools.optim.Optimizer
         The optimizer used for training, whose state is to be saved.
     epoch : int
         The current epoch number.
@@ -122,7 +125,7 @@ def save_model_states(
 def load_model_states(
     save_path: str,
     model: brainstate.nn.Module,
-    optimizer: brainstate.optim.Optimizer = None,
+    optimizer: braintools.optim.Optimizer = None,
     **kwargs
 ):
     """
@@ -135,7 +138,7 @@ def load_model_states(
     -----------
     model : brainstate.nn.Module
         The neural network model whose state is to be saved.
-    optimizer : brainstate.optim.Optimizer
+    optimizer : braintools.optim.Optimizer
         The optimizer used for training, whose state is to be saved.
     epoch : int
         The current epoch number.

@@ -217,11 +217,11 @@ def _check_jacobian(
     rec_scale: float = 4.,
     width: float = 0.3
 ):
-    ff_init = brainstate.init.KaimingNormal(scale=ff_scale)
-    rec_init = brainstate.init.KaimingNormal(scale=rec_scale)
+    ff_init = braintools.init.KaimingNormal(scale=ff_scale)
+    rec_init = braintools.init.KaimingNormal(scale=rec_scale)
     model = model_cls(n_in=n, n_rec=n,
                       ff_init=ff_init, rec_init=rec_init,
-                      spk_fun=brainstate.surrogate.ReluGrad(width=width),
+                      spk_fun=braintools.surrogate.ReluGrad(width=width),
                       tau_mem=tau_mem)
     brainstate.nn.init_all_states(model, 1)
 
@@ -235,7 +235,7 @@ def _check_jacobian(
     # states and variables
     states = model.states()
     state_vals = states.to_dict_values()
-    etrace_vars = states.subset(brainscale.ETraceState)
+    etrace_vars = states.subset(brainstate.HiddenState)
     get_state = lambda: jnp.concat([v.value.flatten() for v in etrace_vars.values()])
 
     def f(state, x):
@@ -257,12 +257,12 @@ def _check_jacobian(
     states.assign_dict_values(state_vals)
 
     # diagonal
-    # diagonal1 = brainstate.compile.vector_grad(f, argnums=0)(s, inputs)
+    # diagonal1 = brainstate.transform.vector_grad(f, argnums=0)(s, inputs)
     # states.assign_dict_values(state_vals)
     with brainscale.stop_param_gradients():
         D = np.asarray(jax.jacrev(f, argnums=0)(s, inputs))
         states.assign_dict_values(state_vals)
-        # diagonal = brainstate.compile.vector_grad(f, argnums=0)(s, inputs)
+        # diagonal = brainstate.transform.vector_grad(f, argnums=0)(s, inputs)
         # states.assign_dict_values(state_vals)
         # D = np.diag(diagonal)
     # diff = diagonal1 - diagonal
@@ -323,7 +323,7 @@ def compare_jacobian_approximation_on_artificial_data():
 
 def _compare_jac_one_step(model: brainstate.nn.Module, idx, inp):
     states = model.states()
-    etrace_states = states.subset(brainscale.ETraceState)
+    etrace_states = states.subset(brainstate.HiddenState)
     state_vals = states.to_dict_values()
     hidden = u.math.concatenate([v.value.flatten() for v in etrace_states.values()])
 
@@ -361,7 +361,7 @@ def _compare_jac_all_steps(model: brainstate.nn.Module, inputs):
             return model(x)
 
     def all_run(hid, xs):
-        etrace_states = model.states().subset(brainscale.ETraceState)
+        etrace_states = model.states().subset(brainstate.HiddenState)
 
         i = 0
         for k in etrace_states:
@@ -370,12 +370,12 @@ def _compare_jac_all_steps(model: brainstate.nn.Module, inputs):
             i = j
 
         indices = np.arange(xs.shape[0])
-        spks = brainstate.compile.for_loop(step_run, indices, xs)
+        spks = brainstate.transform.for_loop(step_run, indices, xs)
         new_hidden = jnp.concat([v.value.flatten() for v in etrace_states.values()])
         return new_hidden, spks
 
     def jacobian():
-        etrace_states = model.states().subset(brainscale.ETraceState)
+        etrace_states = model.states().subset(brainstate.HiddenState)
         hidden = jnp.concat([v.value.flatten() for v in etrace_states.values()])
         jac, spks = jax.jacrev(all_run, argnums=0, has_aux=True)(hidden, inputs)
         return jac, spks
@@ -475,7 +475,7 @@ def _compare(
     tau_mem: float = 10.,
     ff_wscale: float = 4.,
     rec_wscale: float = 4.,
-    spk_fun: Callable = brainstate.surrogate.ReluGrad(),
+    spk_fun: Callable = braintools.surrogate.ReluGrad(),
     kwargs: dict = None,
     num_data: int = 50,
     show: bool = False
@@ -483,8 +483,8 @@ def _compare(
     model = model_cls(
         n_in=num_in,
         n_rec=num_rec,
-        ff_init=brainstate.init.KaimingNormal(scale=ff_wscale),
-        rec_init=brainstate.init.KaimingNormal(scale=rec_wscale),
+        ff_init=braintools.init.KaimingNormal(scale=ff_wscale),
+        rec_init=braintools.init.KaimingNormal(scale=rec_wscale),
         spk_fun=spk_fun,
         tau_mem=tau_mem,
         **(kwargs or {})
@@ -501,7 +501,7 @@ def _compare(
 
         brainstate.nn.init_all_states(model)
         indices = np.arange(xs.shape[0])
-        cosine, spikes1 = brainstate.compile.for_loop(partial(_compare_jac_one_step, model), indices, xs)
+        cosine, spikes1 = brainstate.transform.for_loop(partial(_compare_jac_one_step, model), indices, xs)
         fr = jnp.sum(spikes1) / (xs.shape[0] * brainstate.environ.get_dt()) * 1000 / num_rec
 
         cosine2, spikes2 = _compare_jac_all_steps(model, xs)
@@ -538,11 +538,11 @@ def compare_jacobian_approx_on_random_data():
 def compare_jacobian_approx_on_real_dataset():
     brainstate.environ.set(dt=1.0)
     n_rec = 100
-    spk_fun = brainstate.surrogate.ReluGrad(width=0.3)
-    spk_fun = brainstate.surrogate.ReluGrad(width=1.)
-    # spk_fun = brainstate.surrogate.S2NN(alpha=8.0, beta=2.0)
-    # spk_fun = brainstate.surrogate.LeakyRelu(alpha=0.01)
-    # spk_fun = brainstate.surrogate.MultiGaussianGrad()
+    spk_fun = braintools.surrogate.ReluGrad(width=0.3)
+    spk_fun = braintools.surrogate.ReluGrad(width=1.)
+    # spk_fun = braintools.surrogate.S2NN(alpha=8.0, beta=2.0)
+    # spk_fun = braintools.surrogate.LeakyRelu(alpha=0.01)
+    # spk_fun = braintools.surrogate.MultiGaussianGrad()
 
     for n_rec in [10, 50, 100, 200, 300, 400, 500]:
         # data
@@ -677,7 +677,7 @@ def compare_jacobian_approx_on_real_dataset_v2(fn='analysis/jac_cosine_sim'):
 
 def compare_jacobian_approx_when_recurrent_size_increases(fn='analysis/jac_cosine_sim'):
     brainstate.environ.set(dt=1.0)
-    spk_fun = brainstate.surrogate.ReluGrad(width=1.)
+    spk_fun = braintools.surrogate.ReluGrad(width=1.)
 
     rec_sizes = [10, 50, 100, 300, 500, 1000, 2000, 4000, 8000, 10000, 20000, 40000]
     rec_sizes = [10, 50, 100, 300, 500, 1000, 2000, 4000]
@@ -720,7 +720,7 @@ def compare_jacobian_approx_when_recurrent_size_increases(fn='analysis/jac_cosin
 
 def compare_jacobian_approx_when_ff_conn_increases(fn='analysis/jac_cosine_sim'):
     brainstate.environ.set(dt=1.0)
-    spk_fun = brainstate.surrogate.ReluGrad(width=1.)
+    spk_fun = braintools.surrogate.ReluGrad(width=1.)
     n_rec = 200
 
     final_results = dict()
@@ -762,7 +762,7 @@ def compare_jacobian_approx_when_ff_conn_increases(fn='analysis/jac_cosine_sim')
 
 def compare_jacobian_approx_when_rec_conn_increases(fn='analysis/jac_cosine_sim'):
     brainstate.environ.set(dt=1.0)
-    spk_fun = brainstate.surrogate.ReluGrad(width=1.)
+    spk_fun = braintools.surrogate.ReluGrad(width=1.)
     n_rec = 200
 
     final_results = dict()
