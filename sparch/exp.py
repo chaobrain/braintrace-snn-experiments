@@ -74,8 +74,8 @@ class Experiment(brainstate.util.PrettyObject):
 
         # Define optimizer
         self.trainable_weights = self.net.states(brainstate.ParamState)
-        lr = brainstate.optim.StepLR(self.lr, step_size=args.lr_step_size, gamma=args.lr_step_gamma)
-        self.optimizer = brainstate.optim.Adam(lr)
+        lr = braintools.optim.StepLR(self.lr, step_size=args.lr_step_size, gamma=args.lr_step_gamma)
+        self.optimizer = braintools.optim.Adam(lr)
         self.optimizer.register_trainable_weights(self.trainable_weights)
 
     def f_train(self):
@@ -161,7 +161,7 @@ class Experiment(brainstate.util.PrettyObject):
         )
 
         # forward propagation
-        outs = brainstate.compile.for_loop(model, inputs)
+        outs = brainstate.transform.for_loop(model, inputs)
 
         return outs
 
@@ -176,7 +176,7 @@ class Experiment(brainstate.util.PrettyObject):
         inputs = inputs.transpose((1, 0, 2))  # [n_time, n_batch, n_feature]
         return inputs
 
-    @brainstate.compile.jit(static_argnums=0)
+    @brainstate.transform.jit(static_argnums=0)
     def predict(self, inputs: jax.Array, targets: jax.Array):
         inputs = self._process_input(inputs)
 
@@ -197,7 +197,7 @@ class Experiment(brainstate.util.PrettyObject):
         )
 
         # forward propagation
-        outs = brainstate.compile.for_loop(model, inputs)
+        outs = brainstate.transform.for_loop(model, inputs)
         outs = outs.sum(axis=0)
         # outs = outs[-1]
 
@@ -208,7 +208,7 @@ class Experiment(brainstate.util.PrettyObject):
         acc = self._acc(outs, targets)
         return acc, loss
 
-    @brainstate.compile.jit(static_argnums=0)
+    @brainstate.transform.jit(static_argnums=0)
     def bptt_train(self, inputs, targets):
         inputs = self._process_input(inputs)
 
@@ -221,14 +221,14 @@ class Experiment(brainstate.util.PrettyObject):
         )
 
         def _bptt_grad_step():
-            outs = brainstate.compile.for_loop(model, inputs)
+            outs = brainstate.transform.for_loop(model, inputs)
             outs = outs.sum(axis=0)
             # outs = outs[-1]
             loss = self._loss(outs, targets)
             return loss, outs
 
         # gradients
-        grads, loss, outs = brainstate.augment.grad(
+        grads, loss, outs = brainstate.transform.grad(
             _bptt_grad_step,
             self.trainable_weights,
             has_aux=True,
@@ -242,7 +242,7 @@ class Experiment(brainstate.util.PrettyObject):
         acc = self._acc(outs, targets)
         return acc, loss
 
-    @brainstate.compile.jit(static_argnums=0)
+    @brainstate.transform.jit(static_argnums=0)
     def online_train(self, inputs, targets):
         inputs = self._process_input(inputs)
 
@@ -258,7 +258,7 @@ class Experiment(brainstate.util.PrettyObject):
         else:
             raise ValueError(f'Unknown online learning methods: {self.args.method}.')
 
-        @brainstate.augment.vmap_new_states(state_tag='new', axis_size=n_batch)
+        @brainstate.transform.vmap_new_states(state_tag='new', axis_size=n_batch)
         def init():
             inp = jax.ShapeDtypeStruct(inputs.shape[2:], inputs.dtype)
             brainstate.nn.init_all_states(self.net)
@@ -279,7 +279,7 @@ class Experiment(brainstate.util.PrettyObject):
 
         def _etrace_step(prev_grads, x):
             # no need to return weights and states, since they are generated then no longer needed
-            f_grad = brainstate.augment.grad(
+            f_grad = brainstate.transform.grad(
                 _etrace_grad,
                 self.trainable_weights,
                 has_aux=True,
@@ -292,7 +292,7 @@ class Experiment(brainstate.util.PrettyObject):
         def _etrace_train(inputs_):
             # forward propagation
             grads = jax.tree.map(lambda a: jnp.zeros_like(a), self.trainable_weights.to_dict_values())
-            grads, (outs, losses) = brainstate.compile.scan(_etrace_step, grads, inputs_)
+            grads, (outs, losses) = brainstate.transform.scan(_etrace_step, grads, inputs_)
             # gradient updates
             self.optimizer.update(grads)
             # accuracy
@@ -326,15 +326,15 @@ class Experiment(brainstate.util.PrettyObject):
             outname += "_drop" + str(self.pdrop) + "_" + str(self.normalization)
             outname += "_bias" if self.use_bias else "_nobias"
             outname += "_lr" + str(self.lr)
-            exp_folder = f"{outname.replace('.', '_')}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            exp_folder = f"{outname.replace('.', '_')}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}/"
 
         # For a new model check that out path does not exist
         if os.path.exists(exp_folder):
             raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), exp_folder)
 
         # Create folders to store experiment
-        self.log_dir = exp_folder + "/log/"
-        self.checkpoint_dir = exp_folder + "/checkpoints/"
+        self.log_dir = exp_folder
+        self.checkpoint_dir = exp_folder
         if not os.path.exists(self.log_dir):
             os.makedirs(self.log_dir)
         if not os.path.exists(self.checkpoint_dir):
@@ -454,10 +454,7 @@ class Experiment(brainstate.util.PrettyObject):
             # Save best model
             if self.save_best:
                 save_model_states(
-                    f"{self.checkpoint_dir}/best_model.pth", self.net,
-                    valid_acc=best_acc,
-                    epoch=best_epoch
-                )
+                    f"{self.checkpoint_dir}/best_model.pth", self.net, valid_acc=best_acc, epoch=best_epoch)
                 self.logger.warning(f"\nBest model saved with valid acc={valid_acc}")
 
         self.logger.warning("\n-----------------------------\n")

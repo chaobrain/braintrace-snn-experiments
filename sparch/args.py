@@ -60,7 +60,7 @@ elif platform.platform() == 'Linux-6.8.0-48-generic-x86_64-with-glibc2.35':
 
 else:
     num_worker = 8
-    shd_path = None
+    shd_path = '../data/SHD/'
     ssc_path = None
 
 
@@ -69,8 +69,7 @@ def add_training_options(parser):
                         help="Path to experiment folder with a pretrained model to load. Note "
                              "that the same path will be used to store the current experiment.")
     parser.add_argument("--mode", type=str, default='train', )
-    parser.add_argument("--new_exp_folder", type=str, default=None,
-                        help="Path to output folder to store experiment.")
+    parser.add_argument("--new_exp_folder", type=str, default=None, help="Path to output folder to store experiment.")
     parser.add_argument("--dataset_name", type=str,
                         choices=["shd", "ssc", "gesture", "gesturev2", "nmnist", "nmnistv2"],
                         default="shd", help="Dataset name (shd, ssc, hd or sc).")
@@ -122,45 +121,20 @@ def add_training_options(parser):
 
 def add_model_options(parser):
     parser.add_argument(
-        "--model_type",
-        type=str,
+        "--model_type", type=str, default="LIF", help="Type of ANN or SNN model.",
         choices=["LIF", "adLIF", "RLIF", "RadLIF", "MLP", "RNN", "LiGRU", "GRU"],
-        default="LIF",
-        help="Type of ANN or SNN model.",
     )
-    parser.add_argument(
-        "--nb_layers",
-        type=int,
-        default=3,
-        help="Number of layers (including readout layer).",
-    )
-    parser.add_argument(
-        "--nb_hiddens",
-        type=int,
-        default=128,
-        help="Number of neurons in all hidden layers.",
-    )
-    parser.add_argument(
-        "--pdrop",
-        type=float,
-        default=0.1,
-        help="Dropout rate, must be between 0 and 1.",
-    )
+    parser.add_argument("--nb_layers", type=int, default=3, help="Number of layers (including readout layer).")
+    parser.add_argument("--nb_hiddens", type=int, default=128, help="Number of neurons in all hidden layers.")
+    parser.add_argument("--pdrop", type=float, default=0.1, help="Dropout rate, must be between 0 and 1.")
     parser.add_argument("--inp_scale", type=float, default=5 ** 0.5)
     parser.add_argument("--rec_scale", type=float, default=1.0)
     parser.add_argument(
-        "--normalization",
-        type=str,
-        default="none",
-        choices=["none", "batchnorm", "layernorm"],
+        "--normalization", type=str, default="none", choices=["none", "batchnorm", "layernorm"],
         help="Type of normalization, every string different from batchnorm "
     )
-    parser.add_argument(
-        "--use_bias",
-        type=lambda x: bool(strtobool(str(x))),
-        default=False,
-        help="Whether to include trainable bias with feedforward weights.",
-    )
+    parser.add_argument("--use_bias", type=lambda x: bool(strtobool(str(x))), default=False,
+                        help="Whether to include trainable bias with feedforward weights.")
     return parser
 
 
@@ -175,9 +149,7 @@ def print_model_options(logger, args):
         Dropout rate: {pdrop}
         Normalization: {normalization}
         Use bias: {use_bias}
-    """.format(
-            **vars(args)
-        )
+    """.format(**vars(args))
     )
 
 
@@ -196,7 +168,5 @@ def print_training_options(logger, args):
         Start epoch: {start_epoch}
         Initial learning rate: {lr}
         Use data augmentation: {use_augm}
-    """.format(
-            **vars(args)
-        )
+    """.format(**vars(args))
     )

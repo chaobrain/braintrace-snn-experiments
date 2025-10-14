@@ -19,7 +19,7 @@ import jax.numpy as jnp
 import numpy as np
 
 
-class SpikeFunctionBoxcar(brainstate.surrogate.Surrogate):
+class SpikeFunctionBoxcar(braintools.surrogate.Surrogate):
     def surrogate_grad(self, x) -> jax.Array:
         return jnp.where(jnp.abs(x) > 0.5, 0., 1.)
 
@@ -211,8 +211,8 @@ class LIFLayer(brainstate.nn.Module):
         self.W = brainscale.nn.Linear(
             self.input_size,
             self.hidden_size,
-            w_init=brainstate.init.KaimingUniform(inp_scale),
-            b_init=brainstate.init.Uniform(-bound, bound) if use_bias else None
+            w_init=braintools.init.KaimingUniform(inp_scale),
+            b_init=braintools.init.Uniform(-bound, bound) if use_bias else None
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
@@ -248,8 +248,8 @@ class LIFLayer(brainstate.nn.Module):
         return s
 
     def init_state(self, *args, **kwargs):
-        self.ut = brainscale.ETraceState(brainstate.random.rand(self.hidden_size))
-        self.st = brainscale.ETraceState(brainstate.random.rand(self.hidden_size))
+        self.ut = brainstate.HiddenState(brainstate.random.rand(self.hidden_size))
+        self.st = brainstate.HiddenState(brainstate.random.rand(self.hidden_size))
 
     def _lif_cell(self, Wx):
         alpha = self.alpha.execute()
@@ -317,8 +317,8 @@ class adLIFLayer(brainstate.nn.Module):
         bound = 1 / self.input_size ** 0.5
         self.W = brainscale.nn.Linear(
             self.input_size, self.hidden_size,
-            w_init=brainstate.init.KaimingUniform(inp_scale),
-            b_init=brainstate.init.Uniform(-bound, bound) if use_bias else None
+            w_init=braintools.init.KaimingUniform(inp_scale),
+            b_init=braintools.init.Uniform(-bound, bound) if use_bias else None
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
@@ -363,9 +363,9 @@ class adLIFLayer(brainstate.nn.Module):
         return s
 
     def init_state(self, *args, **kwargs):
-        self.ut = brainscale.ETraceState(jnp.zeros(self.hidden_size))
-        self.wt = brainscale.ETraceState(jnp.zeros(self.hidden_size))
-        self.st = brainscale.ETraceState(jnp.zeros(self.hidden_size))
+        self.ut = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+        self.wt = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+        self.st = brainstate.HiddenState(jnp.zeros(self.hidden_size))
 
     def _adlif_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges
@@ -436,15 +436,15 @@ class RLIFLayer(brainstate.nn.Module):
         bound = 1 / self.input_size ** 0.5
         self.W = brainscale.nn.Linear(
             self.input_size, self.hidden_size,
-            w_init=brainstate.init.KaimingUniform(inp_scale),
-            b_init=brainstate.init.Uniform(-bound, bound) if use_bias else None
+            w_init=braintools.init.KaimingUniform(inp_scale),
+            b_init=braintools.init.Uniform(-bound, bound) if use_bias else None
         )
         # Set diagonal elements of recurrent matrix to zero
         w_mask = jnp.ones([self.hidden_size, self.hidden_size])
         w_mask = jnp.fill_diagonal(w_mask, 0, inplace=False)
         self.V = brainscale.nn.Linear(
             self.hidden_size, self.hidden_size,
-            w_init=brainstate.init.Orthogonal(rec_scale), b_init=None,
+            w_init=braintools.init.Orthogonal(rec_scale), b_init=None,
             w_mask=w_mask
         )
         self.alpha = brainscale.ElemWiseParam(
@@ -481,8 +481,8 @@ class RLIFLayer(brainstate.nn.Module):
         return s
 
     def init_state(self, *args, **kwargs):
-        self.ut = brainscale.ETraceState(jnp.zeros(self.hidden_size))
-        self.st = brainscale.ETraceState(jnp.zeros(self.hidden_size))
+        self.ut = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+        self.st = brainstate.HiddenState(jnp.zeros(self.hidden_size))
 
     def _rlif_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges
@@ -551,15 +551,15 @@ class RadLIFLayer(brainstate.nn.Module):
         bound = 1 / self.input_size ** 0.5
         self.W = brainscale.nn.Linear(
             self.input_size, self.hidden_size,
-            w_init=brainstate.init.KaimingUniform(inp_scale),
-            b_init=brainstate.init.Uniform(-bound, bound) if use_bias else None
+            w_init=braintools.init.KaimingUniform(inp_scale),
+            b_init=braintools.init.Uniform(-bound, bound) if use_bias else None
         )
         # Set diagonal elements of recurrent matrix to zero
         w_mask = jnp.ones([self.hidden_size, self.hidden_size])
         w_mask = jnp.fill_diagonal(w_mask, 0, inplace=False)
         self.V = brainscale.nn.Linear(
             self.hidden_size, self.hidden_size,
-            w_init=brainstate.init.Orthogonal(rec_scale), b_init=None, w_mask=w_mask
+            w_init=braintools.init.Orthogonal(rec_scale), b_init=None, w_mask=w_mask
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
@@ -605,9 +605,9 @@ class RadLIFLayer(brainstate.nn.Module):
         return s
 
     def init_state(self, *args, **kwargs):
-        self.ut = brainscale.ETraceState(jnp.zeros(self.hidden_size))
-        self.wt = brainscale.ETraceState(jnp.zeros(self.hidden_size))
-        self.st = brainscale.ETraceState(jnp.zeros(self.hidden_size))
+        self.ut = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+        self.wt = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+        self.st = brainstate.HiddenState(jnp.zeros(self.hidden_size))
 
     def _radlif_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges
@@ -672,7 +672,7 @@ class ReadoutLayer(brainstate.nn.Module):
         bound = 1 / self.input_size ** 0.5
         self.W = brainscale.nn.Linear(
             self.input_size, self.hidden_size,
-            b_init=brainstate.init.Uniform(-bound, bound) if use_bias else None
+            b_init=braintools.init.Uniform(-bound, bound) if use_bias else None
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
@@ -705,8 +705,8 @@ class ReadoutLayer(brainstate.nn.Module):
         return out
 
     def init_state(self, *args, **kwargs):
-        self.ut = brainscale.ETraceState(jnp.zeros(self.hidden_size))
-        # self.out = brainscale.ETraceState(jnp.zeros(self.hidden_size))
+        self.ut = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+        # self.out = brainstate.HiddenState(jnp.zeros(self.hidden_size))
 
     def _readout_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges

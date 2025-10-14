@@ -5,16 +5,6 @@ This is the script used to run experiments.
 import os
 import sys
 
-# Linux
-sys.path.append('/mnt/d/codes/projects/brainscale')
-sys.path.append('/mnt/d/codes/projects/brainstate')
-sys.path.append('/mnt/d/codes/projects/brainevent')
-
-# windows
-sys.path.append('D:/codes/projects/brainscale')
-sys.path.append('D:/codes/projects/brainstate')
-sys.path.append('D:/codes/projects/brainevent')
-
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
 
 from exp import Experiment
