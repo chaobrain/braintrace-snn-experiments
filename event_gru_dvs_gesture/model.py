@@ -24,7 +24,7 @@ class FiringRateState(brainstate.ShortTermState):
     pass
 
 
-class SpikeFunction(brainstate.surrogate.Surrogate):
+class SpikeFunction(braintools.surrogate.Surrogate):
     """
     A surrogate gradient function for spiking neural networks.
 
@@ -82,8 +82,8 @@ class LinearDropConn(brainstate.nn.Module):
         self,
         in_size: brainstate.typing.Size,
         out_size: brainstate.typing.Size,
-        w_init: Initializer = brainstate.init.KaimingNormal(),
-        b_init: Optional[Initializer] = brainstate.init.ZeroInit(),
+        w_init: Initializer = braintools.init.KaimingNormal(),
+        b_init: Optional[Initializer] = braintools.init.ZeroInit(),
         name: Optional[str] = None,
         param_type: type = brainscale.ETraceParam,
         drop_conn_rate: float = 0.0,
@@ -101,9 +101,9 @@ class LinearDropConn(brainstate.nn.Module):
         # weights
         w_shape = (self.in_size[-1], self.out_size[-1])
         b_shape = (self.out_size[-1],)
-        params = dict(weight=brainstate.init.param(w_init, w_shape, allow_none=False))
+        params = dict(weight=braintools.init.param(w_init, w_shape, allow_none=False))
         if b_init is not None:
-            params['bias'] = brainstate.init.param(b_init, b_shape, allow_none=False)
+            params['bias'] = braintools.init.param(b_init, b_shape, allow_none=False)
 
         # weight + op
         self.weight_op = param_type(params, op=brainscale.MatMulOp(weight_fn=self.weight_fn))
@@ -200,9 +200,9 @@ class EGRU(brainstate.nn.Module):
         hidden_size: brainstate.typing.Size,
         zoneout_prob: float = 0.0,
         thr_mean: float = 0.3,
-        w_init: Union[brainstate.typing.ArrayLike, Callable] = brainstate.init.XavierNormal(),
-        b_init: Union[brainstate.typing.ArrayLike, Callable] = brainstate.init.ZeroInit(),
-        state_init: Union[brainstate.typing.ArrayLike, Callable] = brainstate.init.ZeroInit(),
+        w_init: Union[brainstate.typing.ArrayLike, Callable] = braintools.init.XavierNormal(),
+        b_init: Union[brainstate.typing.ArrayLike, Callable] = braintools.init.ZeroInit(),
+        state_init: Union[brainstate.typing.ArrayLike, Callable] = braintools.init.ZeroInit(),
         param_type: Callable = brainscale.ETraceParam,
         spk_fun: Callable = SpikeFunction(dampening_factor=0.7, pseudo_derivative_support=1.0),
         include_trace: bool = False,
@@ -253,29 +253,29 @@ class EGRU(brainstate.nn.Module):
         # bst.random.random(1)
 
         # hidden state for all sequences.
-        self.h = brainscale.ETraceState(brainstate.init.param(self.state_init, self.out_size, batch_size))
+        self.h = brainstate.HiddenState(braintools.init.param(self.state_init, self.out_size, batch_size))
 
         # the output gate for all sequences (values: 0 or 1).
-        self.o = brainstate.HiddenState(brainstate.init.param(self.state_init, self.out_size, batch_size))
-        # self.o = brainscale.ETraceState(bst.init.param(self.state_init, self.out_size, batch_size))
+        self.o = brainstate.HiddenState(braintools.init.param(self.state_init, self.out_size, batch_size))
+        # self.o = brainstate.HiddenState(bst.init.param(self.state_init, self.out_size, batch_size))
 
         # internal state variable
-        self.y = brainscale.ETraceState(brainstate.init.param(self.state_init, self.out_size, batch_size))
+        self.y = brainstate.HiddenState(braintools.init.param(self.state_init, self.out_size, batch_size))
 
         # # firing rate
-        self.fr = FiringRateState(brainstate.init.param(brainstate.init.ZeroInit(), self.out_size, batch_size))
+        self.fr = FiringRateState(braintools.init.param(braintools.init.ZeroInit(), self.out_size, batch_size))
 
         # smoothed output values, can be beneficial for training.
         if self.include_trace:
-            self.tr = brainscale.ETraceState(brainstate.init.param(self.state_init, self.out_size, batch_size))
+            self.tr = brainstate.HiddenState(braintools.init.param(self.state_init, self.out_size, batch_size))
 
     def reset_state(self, batch_size: int = None, **kwargs):
-        self.h.value = brainstate.init.param(self.state_init, self.out_size, batch_size)
-        self.o.value = brainstate.init.param(self.state_init, self.out_size, batch_size)
-        self.y.value = brainstate.init.param(self.state_init, self.out_size, batch_size)
-        self.fr.value = brainstate.init.param(brainstate.init.ZeroInit(), self.out_size, batch_size)
+        self.h.value = braintools.init.param(self.state_init, self.out_size, batch_size)
+        self.o.value = braintools.init.param(self.state_init, self.out_size, batch_size)
+        self.y.value = braintools.init.param(self.state_init, self.out_size, batch_size)
+        self.fr.value = braintools.init.param(braintools.init.ZeroInit(), self.out_size, batch_size)
         if self.include_trace:
-            self.tr.value = brainstate.init.param(self.state_init, self.out_size, batch_size)
+            self.tr.value = braintools.init.param(self.state_init, self.out_size, batch_size)
 
     def update(self, x):
         old_h = self.h.value
@@ -528,7 +528,7 @@ def f_run():
         y = brainstate.nn.Vmap(gru, vmap_states='hidden')(brainstate.random.randn(batch_size, 10))
         return (y - 1.).sum()
 
-    f_grad = brainstate.augment.grad(loss, grad_states=gru.states(brainstate.ParamState))
+    f_grad = brainstate.transform.grad(loss, grad_states=gru.states(brainstate.ParamState))
     print(f_grad)
     print(f_grad())
 

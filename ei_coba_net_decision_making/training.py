@@ -77,8 +77,8 @@ class Trainer:
 
         # optimizer
         self.trainable_weights = self.target.states().subset(brainstate.ParamState)
-        lr = brainstate.optim.StepLR(lr, step_size=args.epoch_per_step, gamma=0.9)
-        self.optimizer = brainstate.optim.Adam(lr=lr)
+        lr = braintools.optim.StepLR(lr, step_size=args.epoch_per_step, gamma=0.9)
+        self.optimizer = braintools.optim.Adam(lr=lr)
         self.optimizer.register_trainable_weights(self.trainable_weights)
 
         self.smoother = ExponentialSmooth()
@@ -104,7 +104,7 @@ class Trainer:
         acc = jnp.asarray(pred == target, dtype=brainstate.environ.dftype()).mean()
         return acc
 
-    @brainstate.compile.jit(static_argnums=(0,))
+    @brainstate.transform.jit(static_argnums=(0,))
     def etrace_train(self, inputs, targets):
         inputs = jnp.asarray(inputs, dtype=brainstate.environ.dftype())
         # inputs: [n_seq, n_batch, n_feat]
@@ -131,7 +131,7 @@ class Trainer:
         else:
             raise ValueError(f'Unknown online learning methods: {self.args.method}.')
 
-        @brainstate.augment.vmap_new_states(state_tag='new', axis_size=n_batch)
+        @brainstate.transform.vmap_new_states(state_tag='new', axis_size=n_batch)
         def init():
             # init target network
             brainstate.nn.init_all_states(self.target)
@@ -155,7 +155,7 @@ class Trainer:
 
         def _etrace_step(prev_grads, inp):
             # no need to return weights and states, since they are generated then no longer needed
-            f_grad = brainstate.augment.grad(
+            f_grad = brainstate.transform.grad(
                 _etrace_grad,
                 grad_states=self.trainable_weights,
                 has_aux=True,
@@ -168,7 +168,7 @@ class Trainer:
         def _etrace_train(inputs_):
             # forward propagation
             grads = jax.tree.map(jnp.zeros_like, self.trainable_weights.to_dict_values())
-            grads, (outs, mse_ls, l1_ls) = brainstate.compile.scan(_etrace_step, grads, inputs_)
+            grads, (outs, mse_ls, l1_ls) = brainstate.transform.scan(_etrace_step, grads, inputs_)
             acc = self._acc(outs, targets)
 
             grads = brainstate.functional.clip_grad_norm(grads, 1.)
@@ -178,7 +178,7 @@ class Trainer:
 
         # running indices
         if n_sim > 0:
-            brainstate.compile.for_loop(model, inputs[:n_sim])
+            brainstate.transform.for_loop(model, inputs[:n_sim])
             r = _etrace_train(inputs[n_sim:])
         else:
             r = _etrace_train(inputs)
@@ -188,7 +188,7 @@ class Trainer:
         )
         return r + (mem,)
 
-    @brainstate.compile.jit(static_argnums=(0,))
+    @brainstate.transform.jit(static_argnums=(0,))
     def bptt_train(self, inputs, targets) -> Tuple:
         inputs = jnp.asarray(inputs, dtype=brainstate.environ.dftype())
         # inputs: [n_seq, n_batch, n_feat]
@@ -203,13 +203,13 @@ class Trainer:
             return self._loss(out, targets), out
 
         def _bptt_grad():
-            (mse_losses, l1_losses), outs = brainstate.compile.for_loop(_step_run, inputs)
+            (mse_losses, l1_losses), outs = brainstate.transform.for_loop(_step_run, inputs)
             mse_losses = mse_losses[n_sim:].mean()
             l1_losses = l1_losses[n_sim:].mean()
             acc = self._acc(outs[n_sim:], targets)
             return mse_losses + l1_losses, (mse_losses, l1_losses, acc)
 
-        f_grad = brainstate.augment.grad(
+        f_grad = brainstate.transform.grad(
             _bptt_grad,
             grad_states=self.trainable_weights,
             has_aux=True,
