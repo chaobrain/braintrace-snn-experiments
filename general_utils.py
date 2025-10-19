@@ -22,8 +22,6 @@ import os
 import shutil
 import sys
 
-import brainstate
-import braintools
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -84,8 +82,8 @@ def copy_files(tar_dir, dest_dir):
 
 def save_model_states(
     save_path: str,
-    model: brainstate.nn.Module,
-    optimizer: braintools.optim.Optimizer = None,
+    model,
+    optimizer=None,
     **kwargs
 ):
     """
@@ -113,6 +111,8 @@ def save_model_states(
         This function doesn't return any value, but it saves the state to a file
         and prints a confirmation message.
     """
+    import brainstate
+    import braintools
     state = {
         'state_dict': model.states(brainstate.LongTermState),
         **kwargs
@@ -124,8 +124,8 @@ def save_model_states(
 
 def load_model_states(
     save_path: str,
-    model: brainstate.nn.Module,
-    optimizer: braintools.optim.Optimizer = None,
+    model,
+    optimizer=None,
     **kwargs
 ):
     """
@@ -147,6 +147,8 @@ def load_model_states(
     save_path : str
         The file path where the model state will be saved.
     """
+    import brainstate
+    import braintools
     state = {
         'state_dict': model.states(brainstate.LongTermState),
         **kwargs

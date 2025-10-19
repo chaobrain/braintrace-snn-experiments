@@ -5,22 +5,17 @@
 
 ## Requirements
 
-For the main computation of the project, we use the following packages:
 
-- [brainunit](https://github.com/chaobrain/brainunit)
-- [brainstate](https://github.com/chaobrain/brainstate)
-- [brainscale](https://github.com/chaobrain/brainscale)
-- [braintools](https://github.com/chaobrain/braintools)
+```bash
 
-For the dataset generation, we use the following packages:
+pip install BrainX[cuda12]==2025.10.16
+pip install BrainX[cuda13]==2025.10.16
+pip install h5py matplotlib msgpack tonic prettytable
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
-- tonic
-- pytorch
-- torchvision
+```
 
-For the checkpoint and logging of the model parameters, we use the following packages:
 
-- orbax.checkpoint
 
 
 

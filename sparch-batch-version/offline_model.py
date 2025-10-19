@@ -4,6 +4,7 @@ import os
 import time
 from datetime import timedelta
 
+import brainscale
 import brainstate
 import braintools
 import brainunit as u
@@ -12,8 +13,8 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 
-import brainscale
 from general_utils import setup_logging, load_model_states, save_model_states
+from init import KaimingUniform, Orthogonal
 from spiking_datasets import load_dataset
 
 
@@ -40,7 +41,6 @@ def print_training_options(logger, args):
         Load experiment folder: {load_exp_folder}
         New experiment folder: {new_exp_folder}
         Dataset name: {dataset_name}
-        Data folder: {data_folder}
         Save best model: {save_best}
         Batch size: {batch_size}
         Number of epochs: {nb_epochs}
@@ -238,25 +238,29 @@ class LIFLayer(brainstate.nn.Module):
         inp_scale: float = 5 ** 0.5,
         rec_scale: float = 1.0,
         momentum: float = 0.9,
+        relu_width: float = 1.,
+        state_init: str = 'rand',
     ):
         super().__init__()
 
         # Fixed parameters
         self.input_size = int(input_size)
         self.hidden_size = int(hidden_size)
+        self.state_init = state_init
         self.threshold = threshold
         self.dropout = dropout
         self.normalization = normalization
         self.use_bias = use_bias
         self.alpha_lim = [np.exp(-1 / 5), np.exp(-1 / 25)]
         self.spike_fct = SpikeFunctionBoxcar()
+        self.spike_fct = braintools.surrogate.ReluGrad(width=relu_width)
 
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
         self.W = brainscale.nn.Linear(
             self.input_size,
             self.hidden_size,
-            w_init=braintools.init.KaimingUniform(inp_scale),
+            w_init=KaimingUniform(inp_scale),
             b_init=braintools.init.Uniform(-bound, bound) if use_bias else None
         )
         self.alpha = brainscale.ElemWiseParam(
@@ -287,8 +291,14 @@ class LIFLayer(brainstate.nn.Module):
 
     def init_state(self, batch_size=None, **kwargs):
         size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
-        self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
-        self.st = brainstate.HiddenState(brainstate.random.rand(*size))
+        if self.state_init == 'zero':
+            self.ut = brainstate.HiddenState(jnp.zeros(*size))
+            self.st = brainstate.HiddenState(jnp.zeros(*size))
+        elif self.state_init == 'rand':
+            self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
+            self.st = brainstate.HiddenState(brainstate.random.rand(*size))
+        else:
+            raise ValueError("Unsupported state initialization type")
 
     def _lif_cell(self, Wx):
         alpha = self.alpha.execute()
@@ -337,6 +347,8 @@ class adLIFLayer(brainstate.nn.Module):
         inp_scale: float = 5 ** 0.5,
         rec_scale: float = 1.0,
         momentum: float = 0.9,
+        relu_width: float = 1.,
+        state_init: str = 'rand',
     ):
         super().__init__()
 
@@ -344,6 +356,7 @@ class adLIFLayer(brainstate.nn.Module):
         self.input_size = int(input_size)
         self.hidden_size = int(hidden_size)
         self.threshold = threshold
+        self.state_init = state_init
         self.dropout = dropout
         self.normalization = normalization
         self.use_bias = use_bias
@@ -352,12 +365,14 @@ class adLIFLayer(brainstate.nn.Module):
         self.a_lim = [-1.0, 1.0]
         self.b_lim = [0.0, 2.0]
         self.spike_fct = SpikeFunctionBoxcar()
+        self.spike_fct = braintools.surrogate.ReluGrad(width=relu_width)
 
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
         self.W = brainscale.nn.Linear(
-            self.input_size, self.hidden_size,
-            w_init=braintools.init.KaimingUniform(inp_scale),
+            self.input_size,
+            self.hidden_size,
+            w_init=KaimingUniform(inp_scale),
             b_init=braintools.init.Uniform(-bound, bound) if use_bias else None
         )
         self.alpha = brainscale.ElemWiseParam(
@@ -398,9 +413,18 @@ class adLIFLayer(brainstate.nn.Module):
 
     def init_state(self, batch_size=None, **kwargs):
         size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
-        self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
-        self.wt = brainstate.HiddenState(brainstate.random.rand(*size))
-        self.st = brainstate.HiddenState(brainstate.random.rand(*size))
+        if self.state_init == 'zero':
+            self.ut = brainstate.HiddenState(jnp.zeros(*size))
+            self.wt = brainstate.HiddenState(jnp.zeros(*size))
+            self.st = brainstate.HiddenState(jnp.zeros(*size))
+
+        elif self.state_init == 'rand':
+            self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
+            self.wt = brainstate.HiddenState(brainstate.random.rand(*size))
+            self.st = brainstate.HiddenState(brainstate.random.rand(*size))
+
+        else:
+            raise ValueError("Unsupported initial state type")
 
     def _adlif_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges
@@ -455,6 +479,8 @@ class RLIFLayer(brainstate.nn.Module):
         inp_scale: float = 5 ** 0.5,
         rec_scale: float = 1.0,
         momentum: float = 0.9,
+        relu_width: float = 1.,
+        state_init: str = 'rand',
     ):
         super().__init__()
 
@@ -465,22 +491,27 @@ class RLIFLayer(brainstate.nn.Module):
         self.dropout = dropout
         self.normalization = normalization
         self.use_bias = use_bias
+        self.state_init = state_init
         self.alpha_lim = [np.exp(-1 / 5), np.exp(-1 / 25)]
         self.spike_fct = SpikeFunctionBoxcar()
+        self.spike_fct = braintools.surrogate.ReluGrad(width=relu_width)
 
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
         self.W = brainscale.nn.Linear(
             self.input_size, self.hidden_size,
-            w_init=braintools.init.KaimingUniform(inp_scale),
+            w_init=KaimingUniform(inp_scale),
             b_init=braintools.init.Uniform(-bound, bound) if use_bias else None
         )
         # Set diagonal elements of recurrent matrix to zero
         w_mask = jnp.ones([self.hidden_size, self.hidden_size])
         w_mask = jnp.fill_diagonal(w_mask, 0, inplace=False)
         self.V = brainscale.nn.Linear(
-            self.hidden_size, self.hidden_size,
-            w_init=braintools.init.Orthogonal(rec_scale), b_init=None, w_mask=w_mask
+            self.hidden_size,
+            self.hidden_size,
+            w_init=Orthogonal(rec_scale),
+            b_init=None,
+            w_mask=w_mask
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
@@ -511,8 +542,14 @@ class RLIFLayer(brainstate.nn.Module):
 
     def init_state(self, batch_size=None, **kwargs):
         size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
-        self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
-        self.st = brainstate.HiddenState(brainstate.random.rand(*size))
+        if self.state_init == 'zero':
+            self.ut = brainstate.HiddenState(jnp.zeros(*size))
+            self.st = brainstate.HiddenState(jnp.zeros(*size))
+        elif self.state_init == 'rand':
+            self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
+            self.st = brainstate.HiddenState(brainstate.random.rand(*size))
+        else:
+            raise ValueError('Not supported state initialization type')
 
     def _rlif_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges
@@ -562,12 +599,15 @@ class RadLIFLayer(brainstate.nn.Module):
         inp_scale: float = 5 ** 0.5,
         rec_scale: float = 1.0,
         momentum: float = 0.9,
+        relu_width: float = 1.,
+        state_init: str = 'rand',
     ):
         super().__init__()
 
         # Fixed parameters
         self.input_size = int(input_size)
         self.hidden_size = int(hidden_size)
+        self.state_init = state_init
         self.threshold = threshold
         self.dropout = dropout
         self.normalization = normalization
@@ -577,20 +617,24 @@ class RadLIFLayer(brainstate.nn.Module):
         self.a_lim = [-1.0, 1.0]
         self.b_lim = [0.0, 2.0]
         self.spike_fct = SpikeFunctionBoxcar()
+        self.spike_fct = braintools.surrogate.ReluGrad(width=relu_width)
 
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
         self.W = brainscale.nn.Linear(
             self.input_size, self.hidden_size,
-            w_init=braintools.init.KaimingUniform(inp_scale),
+            w_init=KaimingUniform(inp_scale),
             b_init=braintools.init.Uniform(-bound, bound) if use_bias else None
         )
         # Set diagonal elements of recurrent matrix to zero
         w_mask = jnp.ones([self.hidden_size, self.hidden_size])
         w_mask = jnp.fill_diagonal(w_mask, 0, inplace=False)
         self.V = brainscale.nn.Linear(
-            self.hidden_size, self.hidden_size,
-            w_init=braintools.init.Orthogonal(rec_scale), b_init=None, w_mask=w_mask
+            self.hidden_size,
+            self.hidden_size,
+            w_init=Orthogonal(rec_scale),
+            b_init=None,
+            w_mask=w_mask
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
@@ -624,17 +668,24 @@ class RadLIFLayer(brainstate.nn.Module):
     def update(self, x):
         Wx = self.W(x)
         Wx = normalize(self, Wx)
-        s = brainstate.transform.for_loop(self._radlif_cell, Wx)
+        s = brainstate.transform.for_loop(self._lif_cell, Wx)
         s = self.drop(s)
         return s
 
     def init_state(self, batch_size=None, **kwargs):
         size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
-        self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
-        self.wt = brainstate.HiddenState(brainstate.random.rand(*size))
-        self.st = brainstate.HiddenState(brainstate.random.rand(*size))
+        if self.state_init == 'zero':
+            self.ut = brainstate.HiddenState(jnp.zeros(*size))
+            self.wt = brainstate.HiddenState(jnp.zeros(*size))
+            self.st = brainstate.HiddenState(jnp.zeros(*size))
+        elif self.state_init == 'rand':
+            self.ut = brainstate.HiddenState(brainstate.random.rand(*size))
+            self.wt = brainstate.HiddenState(brainstate.random.rand(*size))
+            self.st = brainstate.HiddenState(brainstate.random.rand(*size))
+        else:
+            raise ValueError("Unsupported state_init type")
 
-    def _radlif_cell(self, Wx):
+    def _lif_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges
         alpha = jnp.clip(self.alpha.execute(), min=self.alpha_lim[0], max=self.alpha_lim[1])
         beta = jnp.clip(self.beta.execute(), min=self.beta_lim[0], max=self.beta_lim[1])
@@ -697,7 +748,8 @@ class ReadoutLayer(brainstate.nn.Module):
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
         self.W = brainscale.nn.Linear(
-            self.input_size, self.hidden_size,
+            self.input_size,
+            self.hidden_size,
             b_init=braintools.init.Uniform(-bound, bound) if use_bias else None
         )
         self.alpha = brainscale.ElemWiseParam(
@@ -763,7 +815,6 @@ class Experiment(brainstate.util.PrettyObject):
         self.load_exp_folder = args.load_exp_folder
         self.new_exp_folder = args.new_exp_folder
         self.dataset_name = args.dataset_name
-        self.data_folder = args.data_folder
         self.save_best = args.save_best
         self.batch_size = args.batch_size
         self.nb_epochs = args.nb_epochs
@@ -819,7 +870,6 @@ class Experiment(brainstate.util.PrettyObject):
         self.logger.warning("\nThis dataset uses the same split for validation and testing.\n")
 
     def f_test(self, n_fig=5):
-
         data = iter(self.valid_loader)
 
         for _ in range(5):
@@ -929,19 +979,19 @@ class Experiment(brainstate.util.PrettyObject):
         # Use given path for new model folder
         if self.new_exp_folder is not None:
             exp_folder = self.new_exp_folder
-
         else:
-            # Generate a path for new model from chosen config
-            if self.args.method == 'esd-rtrl':
-                outname = f'{self.args.method}_{self.args.etrace_decay}_{self.dataset_name}/'
-            else:
-                outname = f'{self.args.method}_{self.dataset_name}/'
-            outname = outname + self.net_type + "_"
-            outname += str(self.nb_layers) + "lay" + str(self.nb_hiddens)
-            outname += "_drop" + str(self.pdrop) + "_" + str(self.normalization)
-            outname += "_bias" if self.use_bias else "_nobias"
-            outname += "_lr" + str(self.lr)
-            exp_folder = f"{outname.replace('.', '_')}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}/"
+            exp_folder = '.'
+        # Generate a path for new model from chosen config
+        if self.args.method == 'esd-rtrl':
+            outname = f'{exp_folder}/{self.args.method}_{self.args.etrace_decay}_{self.dataset_name}/'
+        else:
+            outname = f'{exp_folder}/{self.args.method}_{self.dataset_name}/'
+        outname = outname + self.net_type + "_"
+        outname += str(self.nb_layers) + "lay" + str(self.nb_hiddens)
+        outname += "_drop" + str(self.pdrop) + "_" + str(self.normalization)
+        outname += "_bias" if self.use_bias else "_nobias"
+        outname += "_lr" + str(self.lr)
+        exp_folder = f"{outname.replace('.', '_')}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}/"
 
         # For a new model check that out path does not exist
         if os.path.exists(exp_folder):
@@ -1017,7 +1067,7 @@ class Experiment(brainstate.util.PrettyObject):
             accs.append(acc)
 
         # Learning rate of whole epoch
-        current_lr = self.optimizer.lr()
+        current_lr = self.optimizer.current_lr
         self.logger.warning(f"Epoch {e}: lr={current_lr}")
 
         # Train loss of whole epoch

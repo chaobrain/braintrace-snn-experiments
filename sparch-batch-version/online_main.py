@@ -29,7 +29,7 @@ def strtobool(val):
 
 
 num_worker = 0 if platform.system() == 'Windows' else 5
-shd_path = '../data/SHD/'
+shd_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../data/SHD/'))
 
 
 def add_training_options(parser_):
@@ -53,17 +53,33 @@ def add_training_options(parser_):
     parser_.add_argument("--start_epoch", type=int, default=0,
                          help="Epoch number to start training at. Will be 0 if no pretrained "
                               "model is given. First epoch will be start_epoch+1.")
-    parser_.add_argument("--lr", type=float, default=1e-2,
-                         help="Initial learning rate for training. The default value of 0.01 "
-                              "is good for SHD and SC, but 0.001 seemed to work better for HD and SC.")
-    parser_.add_argument("--lr_step_size", type=int, default=10,
-                         help="Number of epochs without progress before the learning rate gets decreased.")
-    parser_.add_argument("--lr_step_gamma", type=float, default=0.9,
-                         help="Factor between 0 and 1 by which the learning rate gets "
-                              "decreased when the scheduler patience is reached.")
-    parser_.add_argument("--use_augm", type=lambda x: bool(strtobool(str(x))), default=False,
-                         help="Whether to use data augmentation or not. Only implemented for "
-                              "non-spiking HD and SC datasets.")
+    parser_.add_argument(
+        "--lr",
+        type=float,
+        default=1e-2,
+        help="Initial learning rate for training. The default value of 0.01 "
+             "is good for SHD and SC, but 0.001 seemed to work better for HD and SC."
+    )
+    parser_.add_argument(
+        "--lr_step_size",
+        type=int,
+        default=10,
+        help="Number of epochs without progress before the learning rate gets decreased."
+    )
+    parser_.add_argument(
+        "--lr_step_gamma",
+        type=float,
+        default=0.9,
+        help="Factor between 0 and 1 by which the learning rate gets "
+             "decreased when the scheduler patience is reached."
+    )
+    parser_.add_argument(
+        "--use_augm",
+        type=lambda x: bool(strtobool(str(x))),
+        default=False,
+        help="Whether to use data augmentation or not. Only implemented for "
+             "non-spiking HD and SC datasets."
+    )
     return parser_
 
 
@@ -75,8 +91,8 @@ def add_model_options(parser_):
     parser_.add_argument("--nb_layers", type=int, default=3, help="Number of layers (including readout layer).")
     parser_.add_argument("--nb_hiddens", type=int, default=128, help="Number of neurons in all hidden layers.")
     parser_.add_argument("--pdrop", type=float, default=0.1, help="Dropout rate, must be between 0 and 1.")
-    parser_.add_argument("--inp_scale", type=float, default=5 ** 0.5)
-    parser_.add_argument("--rec_scale", type=float, default=1.0)
+    parser_.add_argument("--inp_scale", type=float, default=20.0)
+    parser_.add_argument("--rec_scale", type=float, default=5.0)
     parser_.add_argument("--momentum", type=float, default=0.99)
     parser_.add_argument("--relu_width", type=float, default=1.0)
     parser_.add_argument(

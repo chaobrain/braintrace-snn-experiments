@@ -1,3 +1,17 @@
+#
+# SPDX-FileCopyrightText: Copyright © 2022 Idiap Research Institute <contact@idiap.ch>
+#
+# SPDX-FileContributor: Alexandre Bittar <abittar@idiap.ch>
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# This file is part of the sparch package
+#
+"""
+This is to define the experiment class used to perform training and testing
+of ANNs and SNNs on all speech command recognition datasets.
+"""
+
 import datetime
 import errno
 import os
@@ -14,14 +28,15 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 from brainstate.nn._normalizations import _canonicalize_axes, _compute_stats, _normalize, NormalizationParamState
+from brainstate.typing import ArrayLike
 
-from batchnorm import batch_norm
 from general_utils import setup_logging, load_model_states, save_model_states
 from init import KaimingUniform, Orthogonal
 from spiking_datasets import load_dataset
 
 
 def print_model_options(logger, args):
+    logger.warning('parameters: {}'.format(vars(args)))
     logger.warning(
         """
         Model Config
@@ -55,91 +70,12 @@ def print_training_options(logger, args):
     )
 
 
-class BatchNorm0d_V1(brainstate.nn.Module):
-    num_spatial_dims: int = 0
-
-    def __init__(
-        self,
-        in_size: brainstate.typing.Size,
-        feature_axis: brainstate.typing.Axes = -1,
-        *,
-        track_running_stats: bool = True,
-        epsilon: float = 1e-5,
-        momentum: float = 0.99,
-        affine: bool = True,
-        BN_type: str = 'old',
-        bias_initializer: Union[brainstate.typing.ArrayLike, Callable] = braintools.init.Constant(0.),
-        scale_initializer: Union[brainstate.typing.ArrayLike, Callable] = braintools.init.Constant(1.),
-        axis_name: Optional[Union[str, Sequence[str]]] = None,
-        axis_index_groups: Optional[Sequence[Sequence[int]]] = None,
-        use_fast_variance: bool = True,
-        name: Optional[str] = None,
-        dtype: Any = None,
-    ):
-        super().__init__(name=name)
-
-        # parameters
-        self.BN_type = BN_type
-        self.in_size = in_size
-        self.out_size = in_size
-        self.affine = affine
-        self.bias_initializer = bias_initializer
-        self.scale_initializer = scale_initializer
-        self.dtype = dtype or brainstate.environ.dftype()
-        self.track_running_stats = track_running_stats
-        self.momentum = jnp.asarray(momentum, dtype=self.dtype)
-        self.epsilon = jnp.asarray(epsilon, dtype=self.dtype)
-        self.use_fast_variance = use_fast_variance
-
-        # parameters about axis
-        feature_axis = (feature_axis,) if isinstance(feature_axis, int) else feature_axis
-        self.feature_axes = _canonicalize_axes(len(self.in_size), feature_axis)
-        self.axis_name = axis_name
-        self.axis_index_groups = axis_index_groups
-
-        # variables
-        feature_shape = tuple([(ax if i in self.feature_axes else 1) for i, ax in enumerate(self.in_size)])
-        self.feature_shape = feature_shape
-        if self.track_running_stats:
-            self.running_mean = brainstate.BatchState(jnp.zeros(feature_shape, dtype=self.dtype))
-            self.running_var = brainstate.BatchState(jnp.ones(feature_shape, dtype=self.dtype))
-        else:
-            self.running_mean = None
-            self.running_var = None
-
-        # parameters
-        if self.affine:
-            assert track_running_stats, "Affine parameters are not needed when track_running_stats is False."
-            bias = braintools.init.param(self.bias_initializer, feature_shape)
-            scale = braintools.init.param(self.scale_initializer, feature_shape)
-            self.weight = NormalizationParamState(dict(bias=bias, scale=scale))
-        else:
-            self.weight = None
-
-    def init_state(self, batch_size=None, **kwargs):
-        self.total_mean = brainstate.ShortTermState(jnp.zeros(self.feature_shape, dtype=self.dtype))
-        self.total_var = brainstate.ShortTermState(jnp.zeros(self.feature_shape, dtype=self.dtype))
-        self.index = brainstate.ShortTermState(0)
-
-    def update(self, x):
-        fit_phase = brainstate.environ.get('fit', desc='Whether this is a fitting process. Bool.')
-        self.index.value += 1
-        out, self.total_mean.value, self.total_var.value = batch_norm(
-            x, self.weight.value['scale'], self.weight.value['bias'],
-            self.running_mean.value, self.running_var.value,
-            self.total_mean.value, self.total_var.value,
-            fit_phase, self.epsilon, -1
-        )
-        return out
-
-    def finalize(self):
-        mean = self.total_mean.value / self.index.value
-        var = self.total_var.value / self.index.value
-        self.running_mean.value += (1 - self.momentum) * (mean - self.running_mean.value)
-        self.running_var.value += (1 - self.momentum) * (var - self.running_var.value)
+class SpikeFunctionBoxcar(braintools.surrogate.Surrogate):
+    def surrogate_grad(self, x) -> jax.Array:
+        return jnp.where(jnp.abs(x) > 0.5, 0., 1.)
 
 
-class BatchNorm0d_V2(brainstate.nn.Module):
+class BatchNorm0d(brainstate.nn.Module):
     num_spatial_dims: int = 0
 
     def __init__(
@@ -239,7 +175,8 @@ class BatchNorm0d_V2(brainstate.nn.Module):
                 mean, var = _compute_stats(
                     self.total_mean.value / self.index.value,
                     reduction_axes,
-                    dtype=self.dtype, axis_name=self.axis_name,
+                    dtype=self.dtype,
+                    axis_name=self.axis_name,
                     axis_index_groups=self.axis_index_groups,
                     use_fast_variance=self.use_fast_variance,
                 )
@@ -253,7 +190,10 @@ class BatchNorm0d_V2(brainstate.nn.Module):
 
         # normalize
         return _normalize(
-            x, mean=mean, var=var, weights=self.weight,
+            x,
+            mean=mean,
+            var=var,
+            weights=self.weight,
             reduction_axes=reduction_axes,
             feature_axes=self.feature_axes,
             dtype=self.dtype, epsilon=self.epsilon
@@ -263,8 +203,10 @@ class BatchNorm0d_V2(brainstate.nn.Module):
         x = self.total_mean.value / self.index.value
         reduction_axes = tuple(i for i in range(x.ndim) if (i - 1) not in self.feature_axes)
         mean, var = _compute_stats(
-            x, reduction_axes,
-            dtype=self.dtype, axis_name=self.axis_name,
+            x,
+            reduction_axes,
+            dtype=self.dtype,
+            axis_name=self.axis_name,
             axis_index_groups=self.axis_index_groups,
             use_fast_variance=self.use_fast_variance,
         )
@@ -272,84 +214,25 @@ class BatchNorm0d_V2(brainstate.nn.Module):
         self.running_var.value = self.momentum * self.running_var.value + (1 - self.momentum) * var
 
 
-norm_type = BatchNorm0d_V1
-norm_type = BatchNorm0d_V2
-
-
-# norm_type = BatchNorm0d
-
-
-def init(size):
-    return brainstate.random.rand(*size)
-    # return jnp.zeros(size)
-
-
-def normalize(self, x):
-    # if self.normalize:
-    #     x = self.norm(x)
-    # return self.W(x)
-
-    Wx = self.W(x)
-    if self.normalize:
-        Wx = self.norm(Wx)
-    return Wx
-
-
 class SNN(brainstate.nn.Module):
-    """
-    A multi-layered Spiking Neural Network (SNN).
-
-    It accepts input tensors formatted as (batch, time, feat). In the case of
-    4d inputs like (batch, time, feat, channel) the input is flattened as
-    (batch, time, feat*channel).
-
-    The function returns the outputs of the last spiking or readout layer
-    with shape (batch, time, feats) or (batch, feats) respectively, as well
-    as the firing rates of all hidden neurons with shape (num_layers*feats).
-
-    Arguments
-    ---------
-    input_shape : tuple
-        Shape of an input example.
-    layer_sizes : int list
-        List of number of neurons in all hidden layers
-    neuron_type : str
-        Type of neuron model, either 'LIF', 'adLIF', 'RLIF' or 'RadLIF'.
-    threshold : float
-        Fixed threshold value for the membrane potential.
-    dropout : float
-        Dropout rate (must be between 0 and 1).
-    normalization : str
-        Type of normalization (batchnorm, layernorm). Every string different
-        from batchnorm and layernorm will result in no normalization.
-    use_bias : bool
-        If True, additional trainable bias is used with feedforward weights.
-    use_readout_layer : bool
-        If True, the final layer is a non-spiking, non-recurrent LIF and outputs
-        a cumulative sum of the membrane potential over time. The outputs have
-        shape (batch, labels) with no time dimension. If False, the final layer
-        is the same as the hidden layers and outputs spike trains with shape
-        (batch, time, labels).
-    """
-
     def __init__(
         self,
         input_shape,
         layer_sizes,
         neuron_type: str = "LIF",
-        threshold: float = 1.0,
+        threshold: float = 0.5,
         dropout: float = 0.0,
         inp_scale: float = 5 ** 0.5,
         rec_scale: float = 1.0,
         normalization: str = "batchnorm",
+        surrogate: str = "boxcar",
         use_bias: bool = False,
         use_readout_layer: bool = True,
-        momentum: float = 0.9,
-        relu_width: float = 1.
     ):
         super().__init__()
 
         # Fixed parameters
+        self.surrogate = surrogate
         self.input_size = input_shape
         self.layer_sizes = layer_sizes
         self.num_layers = len(layer_sizes)
@@ -362,8 +245,6 @@ class SNN(brainstate.nn.Module):
         self.use_readout_layer = use_readout_layer
         self.inp_scale = inp_scale
         self.rec_scale = rec_scale
-        self.momentum = momentum
-        self.relu_width = relu_width
 
         if neuron_type not in ["LIF", "adLIF", "RLIF", "RadLIF"]:
             raise ValueError(f"Invalid neuron type {neuron_type}")
@@ -390,11 +271,10 @@ class SNN(brainstate.nn.Module):
                     threshold=self.threshold,
                     dropout=self.dropout,
                     normalization=self.normalization,
+                    surrogate=self.surrogate,
                     use_bias=self.use_bias,
                     inp_scale=self.inp_scale,
                     rec_scale=self.rec_scale,
-                    momentum=self.momentum,
-                    relu_width=self.relu_width,
                 )
             )
             input_size = self.layer_sizes[i]
@@ -408,7 +288,6 @@ class SNN(brainstate.nn.Module):
                     dropout=self.dropout,
                     normalization=self.normalization,
                     use_bias=self.use_bias,
-                    momentum=self.momentum,
                 )
             )
 
@@ -428,14 +307,122 @@ class SNNExtractSpikes(brainstate.nn.Module):
 
     def update(self, x):
         outs = []
-        layers = self.net.snn[:-1] if self.net.use_readout_layer else self.net.snn
+        layers = (
+            self.net.snn[:-1]
+            if self.net.use_readout_layer else
+            self.net.snn
+        )
         for layer in layers:
             x = layer(x)
             outs.append(x)
         return outs
 
 
-class LIFLayer(brainstate.nn.Module):
+class DyT(brainstate.nn.Module):
+    def __init__(self, num_features, alpha_init_value=0.5):
+        super().__init__()
+        self.param = brainstate.ParamState(
+            {
+                'alpha': jnp.ones(1) * alpha_init_value,
+                'weight': jnp.ones(num_features),
+                'bias': jnp.zeros(num_features),
+            }
+        )
+
+    def update(self, x):
+        # jax.debug.print('x pre min = {min}, max = {max}', min=x.min(), max=x.max())
+        x = jnp.tanh(self.param.value['alpha'] * x)
+        # jax.debug.print('x post min = {min}, max = {max}', min=x.min(), max=x.max())
+        return x * self.param.value['weight'] + self.param.value['bias']
+
+
+class FakeState:
+    def __init__(self, value):
+        self.value = value
+
+    def execute(self, x):
+        param = self.value
+        if 'scale' in param:
+            x = x * param['scale']
+        if 'bias' in param:
+            x = x + param['bias']
+        return x
+
+
+class LayerWithNormalization(brainstate.nn.Module):
+    def add_spk(self, surrogate: str):
+        if surrogate == 'boxcar':
+            self.spike_fct = SpikeFunctionBoxcar()
+        elif surrogate == 'relu':
+            self.spike_fct = braintools.surrogate.ReluGrad()
+        else:
+            raise NotImplementedError
+
+    def add_norm(self, normalization):
+        # Initialize normalization
+        self.normalize = False
+        if normalization == "layernorm":
+            # self.norm = brainscale.nn.LayerNorm(self.hidden_size, param_type=brainstate.FakeState)
+            self.norm = brainstate.nn.LayerNorm(self.hidden_size, param_type=FakeState)
+            self.normalize = True
+        elif normalization == "rmsnorm":
+            self.norm = brainscale.nn.RMSNorm(self.hidden_size)
+            self.normalize = True
+        elif normalization == "batchnorm":
+            self.norm = BatchNorm0d(self.hidden_size)
+            self.normalize = True
+        elif normalization == "dyt":
+            self.norm = DyT(self.hidden_size)
+            self.normalize = True
+
+    def apply_norm(self, x):
+        if self.normalize:
+            x = self.norm(x)
+        return x
+
+
+class Linear(brainstate.nn.Module):
+    def __init__(
+        self,
+        in_size: Union[int, Sequence[int]],
+        out_size: Union[int, Sequence[int]],
+        w_init: Union[Callable, ArrayLike] = KaimingUniform(),
+        b_init: Optional[Union[Callable, ArrayLike]] = braintools.init.ZeroInit(),
+        w_mask: Optional[Union[ArrayLike, Callable]] = None,
+        name: Optional[str] = None,
+        param_type: type = brainscale.ETraceParam,
+        weight_norm: bool = False,
+    ):
+        super().__init__(name=name)
+
+        # input and output shape
+        self.in_size = in_size
+        self.out_size = out_size
+
+        # w_mask
+        w_shape = (self.in_size[-1], self.out_size[-1])
+        b_shape = (self.out_size[-1],)
+        self.w_mask = braintools.init.param(w_mask, w_shape)
+
+        # weights
+        params = dict(weight=braintools.init.param(w_init, w_shape, allow_none=False))
+        if b_init is not None:
+            params['bias'] = braintools.init.param(b_init, b_shape, allow_none=False)
+
+        # weight + op
+        if weight_norm:
+            weight_fn = brainstate.nn.weight_standardization
+        else:
+            weight_fn = lambda x: x
+        self.weight_op = param_type(
+            params, op=brainscale.MatMulOp(self.w_mask, weight_fn=weight_fn)
+        )
+
+    def update(self, x):
+        return self.weight_op.execute(x)
+
+
+class LIFLayer(LayerWithNormalization):
     """
     A single layer of Leaky Integrate-and-Fire neurons without layer-wise
     recurrent connections (LIF).
@@ -461,14 +448,13 @@ class LIFLayer(brainstate.nn.Module):
         self,
         input_size,
         hidden_size,
-        threshold: float = 1.0,
+        surrogate,
+        threshold: float = 0.5,
         dropout: float = 0.0,
         normalization: str = "batchnorm",
         use_bias: bool = False,
         inp_scale: float = 5 ** 0.5,
         rec_scale: float = 1.0,
-        momentum: float = 0.9,
-        relu_width: float = 1.
     ):
         super().__init__()
 
@@ -479,40 +465,31 @@ class LIFLayer(brainstate.nn.Module):
         self.dropout = dropout
         self.normalization = normalization
         self.use_bias = use_bias
-        self.alpha_lim = [np.exp(-1 / 5), np.exp(-1 / 25)]
-        self.spike_fct = braintools.surrogate.ReluGrad(width=relu_width)
+        self.alpha_lim = [np.exp(-1 / 5), np.exp(-1 / 100)]
+        self.add_spk(surrogate)
 
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
-        self.W = brainscale.nn.Linear(
+        self.W = Linear(
             self.input_size,
             self.hidden_size,
             w_init=KaimingUniform(inp_scale),
-            b_init=braintools.init.Uniform(-bound, bound) if use_bias else None
+            b_init=braintools.init.Uniform(-bound, bound) if use_bias else None,
+            weight_norm=normalization == 'weightnorm',
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
         )
 
         # Initialize normalization
-        self.normalize = False
-        if normalization == "batchnorm":
-            self.norm = norm_type(self.hidden_size, momentum=momentum)
-            self.normalize = True
-        elif normalization == "layernorm":
-            self.norm = brainscale.nn.LayerNorm(self.hidden_size)
-            self.normalize = True
-        elif normalization == "none":
-            pass
-        else:
-            raise ValueError("Unsupported normalization type")
+        self.add_norm(normalization)
 
         # Initialize dropout
         self.drop = brainscale.nn.Dropout(1 - dropout)
 
     def update(self, x):
         # Feed-forward affine transformations (all steps in parallel)
-        Wx = normalize(self, x)
+        Wx = self.apply_norm(self.W(x))
 
         # Compute spikes via neuron dynamics
         s = self._lif_cell(Wx)
@@ -521,10 +498,9 @@ class LIFLayer(brainstate.nn.Module):
         s = self.drop(s)
         return s
 
-    def init_state(self, batch_size=None, **kwargs):
-        size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
-        self.ut = brainstate.HiddenState(init(size))
-        self.st = brainstate.HiddenState(init(size))
+    def init_state(self, *args, **kwargs):
+        self.ut = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+        self.st = brainstate.HiddenState(jnp.zeros(self.hidden_size))
 
     def _lif_cell(self, Wx):
         alpha = self.alpha.execute()
@@ -534,13 +510,14 @@ class LIFLayer(brainstate.nn.Module):
         ut = alpha * self.ut.value - alpha * self.st.value + (1 - alpha) * Wx
 
         # Compute spikes with surrogate gradient
+        # jax.debug.print('ut = {ut}', ut=ut)
         st = self.spike_fct(ut - self.threshold)
         self.ut.value = ut
         self.st.value = st
         return st
 
 
-class adLIFLayer(brainstate.nn.Module):
+class adLIFLayer(LayerWithNormalization):
     """
     A single layer of adaptive Leaky Integrate-and-Fire neurons without
     layer-wise recurrent connections (adLIF).
@@ -566,14 +543,13 @@ class adLIFLayer(brainstate.nn.Module):
         self,
         input_size,
         hidden_size,
-        threshold: float = 1.0,
+        surrogate,
+        threshold: float = 0.5,
         dropout: float = 0.0,
         normalization: str = "batchnorm",
         use_bias: bool = False,
         inp_scale: float = 5 ** 0.5,
         rec_scale: float = 1.0,
-        momentum: float = 0.9,
-        relu_width: float = 1.
     ):
         super().__init__()
 
@@ -588,15 +564,16 @@ class adLIFLayer(brainstate.nn.Module):
         self.beta_lim = [np.exp(-1 / 30), np.exp(-1 / 120)]
         self.a_lim = [-1.0, 1.0]
         self.b_lim = [0.0, 2.0]
-        self.spike_fct = braintools.surrogate.ReluGrad(width=relu_width)
+        self.add_spk(surrogate)
 
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
-        self.W = brainscale.nn.Linear(
+        self.W = Linear(
             self.input_size,
             self.hidden_size,
             w_init=KaimingUniform(inp_scale),
-            b_init=braintools.init.Uniform(-bound, bound) if use_bias else None
+            b_init=braintools.init.Uniform(-bound, bound) if use_bias else None,
+            weight_norm=normalization == 'weightnorm',
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
@@ -612,24 +589,14 @@ class adLIFLayer(brainstate.nn.Module):
         )
 
         # Initialize normalization
-        self.normalize = False
-        if normalization == "batchnorm":
-            self.norm = norm_type(self.hidden_size, momentum=momentum)
-            self.normalize = True
-        elif normalization == "layernorm":
-            self.norm = brainscale.nn.LayerNorm(self.hidden_size)
-            self.normalize = True
-        elif normalization == "none":
-            pass
-        else:
-            raise ValueError("Unsupported normalization type")
+        self.add_norm(normalization)
 
         # Initialize dropout
         self.drop = brainscale.nn.Dropout(1 - dropout)
 
     def update(self, x):
         # Feed-forward affine transformations (all steps in parallel)
-        Wx = normalize(self, x)
+        Wx = self.apply_norm(self.W(x))
 
         # Compute spikes via neuron dynamics
         s = self._adlif_cell(Wx)
@@ -638,11 +605,10 @@ class adLIFLayer(brainstate.nn.Module):
         s = self.drop(s)
         return s
 
-    def init_state(self, batch_size=None, **kwargs):
-        size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
-        self.ut = brainstate.HiddenState(init(size))
-        self.wt = brainstate.HiddenState(init(size))
-        self.st = brainstate.HiddenState(init(size))
+    def init_state(self, *args, **kwargs):
+        self.ut = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+        self.wt = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+        self.st = brainstate.HiddenState(jnp.zeros(self.hidden_size))
 
     def _adlif_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges
@@ -664,7 +630,7 @@ class adLIFLayer(brainstate.nn.Module):
         return st
 
 
-class RLIFLayer(brainstate.nn.Module):
+class RLIFLayer(LayerWithNormalization):
     """
     A single layer of Leaky Integrate-and-Fire neurons with layer-wise
     recurrent connections (RLIF).
@@ -690,14 +656,13 @@ class RLIFLayer(brainstate.nn.Module):
         self,
         input_size,
         hidden_size,
-        threshold: float = 1.0,
+        surrogate,
+        threshold: float = 0.5,
         dropout: float = 0.0,
         normalization: str = "batchnorm",
         use_bias: bool = False,
         inp_scale: float = 5 ** 0.5,
         rec_scale: float = 1.0,
-        momentum: float = 0.9,
-        relu_width: float = 1.
     ):
         super().__init__()
 
@@ -709,49 +674,41 @@ class RLIFLayer(brainstate.nn.Module):
         self.normalization = normalization
         self.use_bias = use_bias
         self.alpha_lim = [np.exp(-1 / 5), np.exp(-1 / 25)]
-        self.spike_fct = braintools.surrogate.ReluGrad(width=relu_width)
+        self.add_spk(surrogate)
 
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
-        self.W = brainscale.nn.Linear(
+        self.W = Linear(
             self.input_size,
             self.hidden_size,
             w_init=KaimingUniform(inp_scale),
-            b_init=braintools.init.Uniform(-bound, bound) if use_bias else None
+            b_init=braintools.init.Uniform(-bound, bound) if use_bias else None,
+            weight_norm=normalization == 'weightnorm',
         )
         # Set diagonal elements of recurrent matrix to zero
         w_mask = jnp.ones([self.hidden_size, self.hidden_size])
         w_mask = jnp.fill_diagonal(w_mask, 0, inplace=False)
-        self.V = brainscale.nn.Linear(
+        self.V = Linear(
             self.hidden_size,
             self.hidden_size,
             w_init=Orthogonal(rec_scale),
             b_init=None,
             # w_mask=w_mask
+            weight_norm=normalization == 'weightnorm',
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
         )
 
         # Initialize normalization
-        self.normalize = False
-        if normalization == "batchnorm":
-            self.norm = norm_type(self.hidden_size, momentum=momentum)
-            self.normalize = True
-        elif normalization == "layernorm":
-            self.norm = brainscale.nn.LayerNorm(self.hidden_size)
-            self.normalize = True
-        elif normalization == "none":
-            pass
-        else:
-            raise ValueError("Unsupported normalization type")
+        self.add_norm(normalization)
 
         # Initialize dropout
         self.drop = brainscale.nn.Dropout(1 - dropout)
 
     def update(self, x):
         # Feed-forward affine transformations (all steps in parallel)
-        Wx = normalize(self, x)
+        Wx = self.apply_norm(self.W(x))
 
         # Compute spikes via neuron dynamics
         s = self._rlif_cell(Wx)
@@ -760,10 +717,9 @@ class RLIFLayer(brainstate.nn.Module):
         s = self.drop(s)
         return s
 
-    def init_state(self, batch_size=None, **kwargs):
-        size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
-        self.ut = brainstate.HiddenState(init(size))
-        self.st = brainstate.HiddenState(init(size))
+    def init_state(self, *args, **kwargs):
+        self.ut = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+        self.st = brainstate.HiddenState(jnp.zeros(self.hidden_size))
 
     def _rlif_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges
@@ -780,7 +736,7 @@ class RLIFLayer(brainstate.nn.Module):
         return st
 
 
-class RadLIFLayer(brainstate.nn.Module):
+class RadLIFLayer(LayerWithNormalization):
     """
     A single layer of adaptive Leaky Integrate-and-Fire neurons with layer-wise
     recurrent connections (RadLIF).
@@ -806,14 +762,13 @@ class RadLIFLayer(brainstate.nn.Module):
         self,
         input_size,
         hidden_size,
-        threshold: float = 1.0,
+        surrogate,
+        threshold: float = 0.5,
         dropout: float = 0.0,
         normalization: str = "batchnorm",
         use_bias: bool = False,
         inp_scale: float = 5 ** 0.5,
         rec_scale: float = 1.0,
-        momentum: float = 0.9,
-        relu_width: float = 1.
     ):
         super().__init__()
 
@@ -828,25 +783,27 @@ class RadLIFLayer(brainstate.nn.Module):
         self.beta_lim = [np.exp(-1 / 30), np.exp(-1 / 120)]
         self.a_lim = [-1.0, 1.0]
         self.b_lim = [0.0, 2.0]
-        self.spike_fct = braintools.surrogate.ReluGrad(width=relu_width)
+        self.add_spk(surrogate)
 
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
-        self.W = brainscale.nn.Linear(
+        self.W = Linear(
             self.input_size,
             self.hidden_size,
             w_init=KaimingUniform(inp_scale),
-            b_init=braintools.init.Uniform(-bound, bound) if use_bias else None
+            b_init=braintools.init.Uniform(-bound, bound) if use_bias else None,
+            weight_norm=normalization == 'weightnorm',
         )
         # Set diagonal elements of recurrent matrix to zero
-        # w_mask = jnp.ones([self.hidden_size, self.hidden_size])
-        # w_mask = jnp.fill_diagonal(w_mask, 0, inplace=False)
-        self.V = brainscale.nn.Linear(
+        w_mask = jnp.ones([self.hidden_size, self.hidden_size])
+        w_mask = jnp.fill_diagonal(w_mask, 0, inplace=False)
+        self.V = Linear(
             self.hidden_size,
             self.hidden_size,
             w_init=Orthogonal(rec_scale),
             b_init=None,
             # w_mask=w_mask
+            weight_norm=normalization == 'weightnorm',
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
@@ -862,24 +819,14 @@ class RadLIFLayer(brainstate.nn.Module):
         )
 
         # Initialize normalization
-        self.normalize = False
-        if normalization == "batchnorm":
-            self.norm = norm_type(self.hidden_size, momentum=momentum)
-            self.normalize = True
-        elif normalization == "layernorm":
-            self.norm = brainscale.nn.LayerNorm(self.hidden_size)
-            self.normalize = True
-        elif normalization == "none":
-            pass
-        else:
-            raise ValueError("Unsupported normalization type")
+        self.add_norm(normalization)
 
         # Initialize dropout
         self.drop = brainscale.nn.Dropout(1 - dropout)
 
     def update(self, x):
         # Feed-forward affine transformations (all steps in parallel)
-        Wx = normalize(self, x)
+        Wx = self.apply_norm(self.W(x))
 
         # Compute spikes via neuron dynamics
         s = self._radlif_cell(Wx)
@@ -889,11 +836,10 @@ class RadLIFLayer(brainstate.nn.Module):
 
         return s
 
-    def init_state(self, batch_size=None, **kwargs):
-        size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
-        self.ut = brainstate.HiddenState(init(size))
-        self.wt = brainstate.HiddenState(init(size))
-        self.st = brainstate.HiddenState(init(size))
+    def init_state(self, *args, **kwargs):
+        self.ut = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+        self.wt = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+        self.st = brainstate.HiddenState(jnp.zeros(self.hidden_size))
 
     def _radlif_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges
@@ -915,7 +861,7 @@ class RadLIFLayer(brainstate.nn.Module):
         return st
 
 
-class ReadoutLayer(brainstate.nn.Module):
+class ReadoutLayer(LayerWithNormalization):
     """
     This function implements a single layer of non-spiking Leaky Integrate and
     Fire (LIF) neurons, where the output consists of a cumulative sum of the
@@ -943,7 +889,6 @@ class ReadoutLayer(brainstate.nn.Module):
         dropout: float = 0.0,
         normalization: str = "batchnorm",
         use_bias: bool = False,
-        momentum: float = 0.9,
     ):
         super().__init__()
 
@@ -957,43 +902,33 @@ class ReadoutLayer(brainstate.nn.Module):
 
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
-        self.W = brainscale.nn.Linear(
-            self.input_size, self.hidden_size,
-            b_init=braintools.init.Uniform(-bound, bound) if use_bias else None
+        self.W = Linear(
+            self.input_size,
+            self.hidden_size,
+            b_init=braintools.init.Uniform(-bound, bound) if use_bias else None,
+            weight_norm=normalization == 'weightnorm',
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
         )
 
         # Initialize normalization
-        self.normalize = False
-        if normalization == "batchnorm":
-            self.norm = norm_type(self.hidden_size, momentum=momentum)
-            self.normalize = True
-        elif normalization == "layernorm":
-            self.norm = brainscale.nn.LayerNorm(self.hidden_size)
-            self.normalize = True
-        elif normalization == "none":
-            pass
-        else:
-            raise ValueError("Unsupported normalization type")
+        self.add_norm(normalization)
 
         # Initialize dropout
         self.drop = brainscale.nn.Dropout(1 - dropout)
 
     def update(self, x):
         # Feed-forward affine transformations (all steps in parallel)
-        Wx = self.W(x)
-        if self.normalize:
-            Wx = self.norm(Wx)
+        Wx = self.apply_norm(self.W(x))
 
         # Compute membrane potential via non-spiking neuron dynamics
         out = self._readout_cell(Wx)
         return out
 
-    def init_state(self, batch_size=None, **kwargs):
-        size = (self.hidden_size,) if batch_size is None else (batch_size, self.hidden_size)
-        self.ut = brainstate.HiddenState(init(size))
+    def init_state(self, *args, **kwargs):
+        self.ut = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+        # self.out = brainstate.HiddenState(jnp.zeros(self.hidden_size))
 
     def _readout_cell(self, Wx):
         # Bound values of the neuron parameters to plausible ranges
@@ -1083,31 +1018,34 @@ class Experiment(brainstate.util.PrettyObject):
         self.test_one_epoch(self.valid_loader)
         self.logger.warning("\nThis dataset uses the same split for validation and testing.\n")
 
+    def _one_plot(self, spikes, title):
+        spikes = np.reshape(spikes, (spikes.shape[0], -1))
+        # Create a raster plot of spikes
+        neuron_indices = np.where(spikes > 0)
+        plt.scatter(neuron_indices[0], neuron_indices[1], s=1, c='black', marker='|')
+        plt.ylabel('Neuron Index')
+        plt.xlabel('Time Step')
+        plt.title(title)
+        plt.xlim(0, spikes.shape[0])
+        plt.ylim(0, spikes.shape[1])
+
     def f_test(self, n_fig=5):
         data = iter(self.valid_loader)
 
         for _ in range(5):
             x, y = next(data)
-
-            # validation
             x = jnp.asarray(x)
             print(x.shape)
-            outs = self._validate(x)
-            outs = jax.tree.map(np.asarray, outs)
+            outs = jax.tree.map(np.asarray, self._validate(x))
 
             # visualization
-            fig, gs = braintools.visualize.get_figure(len(outs), n_fig, 3, 3)
-            for i, out in enumerate(outs):
-                for i_img in range(n_fig):
-                    fig.add_subplot(gs[i, i_img])
-                    spikes = out[:, i_img]
-                    spikes = np.reshape(spikes, (spikes.shape[0], -1))
-                    # Create a raster plot of spikes
-                    neuron_indices = np.where(spikes > 0)
-                    plt.scatter(neuron_indices[0], neuron_indices[1], s=1, c='black', marker='|')
-                    plt.ylabel('Neuron Index')
-                    plt.xlabel('Time Step')
-                    plt.title(f'Sample {i_img}, Layer {i}')
+            fig, gs = braintools.visualize.get_figure(len(outs) + 1, n_fig, 3, 3)
+            for i_img in range(n_fig):
+                fig.add_subplot(gs[0, i_img])
+                self._one_plot(x[i_img], f'Sample {i_img}, Input')
+                for i, out in enumerate(outs):
+                    fig.add_subplot(gs[i + 1, i_img])
+                    self._one_plot(out[:, i_img], f'Sample {i_img}, Layer {i}')
             plt.show()
             plt.close()
 
@@ -1115,11 +1053,23 @@ class Experiment(brainstate.util.PrettyObject):
         inputs = self._process_input(inputs)
 
         # add environment context
-        model = brainstate.nn.EnvironContext(SNNExtractSpikes(self.net), fit=False)
+        model = brainstate.nn.EnvironContext(
+            SNNExtractSpikes(self.net),
+            fit=False
+        )
 
         # assume the inputs have shape (time, batch, features, ...)
         n_time, n_batch = inputs.shape[:2]
-        brainstate.nn.vmap_init_all_states(model, state_tag='hidden', axis_size=n_batch)
+        brainstate.nn.vmap_init_all_states(
+            model,
+            state_tag='hidden',
+            axis_size=n_batch,
+        )
+        model = brainstate.nn.Vmap(
+            model,
+            vmap_states='hidden',
+            axis_name='batch' if self.normalization == 'batchnorm' else None
+        )
 
         # forward propagation
         outs = brainstate.transform.for_loop(model, inputs)
@@ -1146,14 +1096,60 @@ class Experiment(brainstate.util.PrettyObject):
 
         # assume the inputs have shape (time, batch, features, ...)
         n_time, n_batch = inputs.shape[:2]
-        brainstate.nn.init_all_states(model, batch_size=n_batch)
+        brainstate.nn.vmap_init_all_states(
+            model,
+            state_tag='hidden',
+            axis_size=n_batch,
+        )
+        model = brainstate.nn.Vmap(
+            model,
+            vmap_states='hidden',
+            axis_name='batch' if self.normalization == 'batchnorm' else None
+        )
 
         # forward propagation
         outs = brainstate.transform.for_loop(model, inputs)
         outs = outs.sum(axis=0)
         # outs = outs[-1]
 
+        # loss
         loss = self._loss(outs, targets)
+
+        # accuracy
+        acc = self._acc(outs, targets)
+        return acc, loss
+
+    @brainstate.transform.jit(static_argnums=0)
+    def bptt_train(self, inputs, targets):
+        inputs = self._process_input(inputs)
+
+        brainstate.nn.vmap_init_all_states(self.net, state_tag='hidden', axis_size=inputs.shape[1])
+        model = brainstate.nn.EnvironContext(self.net, fit=True)
+        model = brainstate.nn.Vmap(
+            model,
+            vmap_states='hidden',
+            axis_name='batch' if self.normalization == 'batchnorm' else None
+        )
+
+        def _bptt_grad_step():
+            outs = brainstate.transform.for_loop(model, inputs)
+            outs = outs.sum(axis=0)
+            # outs = outs[-1]
+            loss = self._loss(outs, targets)
+            return loss, outs
+
+        # gradients
+        grads, loss, outs = brainstate.transform.grad(
+            _bptt_grad_step,
+            self.trainable_weights,
+            has_aux=True,
+            return_value=True
+        )()
+
+        # optimization
+        self.optimizer.update(grads)
+
+        # accuracy
         acc = self._acc(outs, targets)
         return acc, loss
 
@@ -1167,21 +1163,25 @@ class Experiment(brainstate.util.PrettyObject):
         # initialize the online learning model
         model = brainstate.nn.EnvironContext(self.net, fit=True)
         if self.args.method == 'esd-rtrl':
-            model = brainscale.IODimVjpAlgorithm(model,
-                                                 self.args.etrace_decay,
-                                                 vjp_method=self.args.vjp_method,
-                                                 mode=brainstate.mixin.Batching())
+            model = brainscale.IODimVjpAlgorithm(model, self.args.etrace_decay, vjp_method=self.args.vjp_method)
         elif self.args.method == 'd-rtrl':
-            model = brainscale.ParamDimVjpAlgorithm(model,
-                                                    vjp_method=self.args.vjp_method,
-                                                    mode=brainstate.mixin.Batching())
+            model = brainscale.ParamDimVjpAlgorithm(model, vjp_method=self.args.vjp_method)
         else:
             raise ValueError(f'Unknown online learning methods: {self.args.method}.')
 
-        inp = jax.ShapeDtypeStruct(inputs.shape[1:], inputs.dtype)
-        brainstate.nn.init_all_states(self.net, batch_size=n_batch)
-        model.compile_graph(inp)
-        model.show_graph()
+        @brainstate.transform.vmap_new_states(state_tag='new', axis_size=n_batch)
+        def init():
+            inp = jax.ShapeDtypeStruct(inputs.shape[2:], inputs.dtype)
+            brainstate.nn.init_all_states(self.net)
+            model.compile_graph(inp)
+            model.show_graph()
+
+        init()
+        model = brainstate.nn.Vmap(
+            model,
+            vmap_states='new',
+            axis_name='batch' if self.normalization == 'batchnorm' else None
+        )
 
         def _etrace_grad(inp):
             out = model(inp)
@@ -1189,30 +1189,36 @@ class Experiment(brainstate.util.PrettyObject):
             return loss, out
 
         def _etrace_step(prev_grads, x):
-            # no need to return weights and states, since they are generated then no longer needed
-            f_grad = brainstate.transform.grad(_etrace_grad, self.trainable_weights, has_aux=True, return_value=True)
+            f_grad = brainstate.transform.grad(
+                _etrace_grad,
+                self.trainable_weights,
+                has_aux=True,
+                return_value=True
+            )
             cur_grads, local_loss, out = f_grad(x)
             next_grads = jax.tree.map(lambda a, b: a + b, prev_grads, cur_grads)
             return next_grads, (out, local_loss)
 
         def _etrace_train(inputs_):
-            # forward propagation
             grads = jax.tree.map(lambda a: jnp.zeros_like(a), self.trainable_weights.to_dict_values())
             grads, (outs, losses) = brainstate.transform.scan(_etrace_step, grads, inputs_)
-            # gradient updates
             self.optimizer.update(grads)
-            # accuracy
             return losses.mean(), outs.sum(axis=0)
 
+        # loss and accuracy
         loss, out_sum = _etrace_train(inputs)
         acc = self._acc(out_sum, targets)
 
         # Finalize batchnorm statistics after each parameter update
-        for node in self.net.nodes(norm_type).values():
+        for node in self.net.nodes(BatchNorm0d).values():
             node.finalize()
         return acc, loss
 
     def init_exp_folders(self):
+        """
+        This function defines the output folders for the experiment.
+        """
+
         # Use given path for new model folder
         if self.new_exp_folder is not None:
             exp_folder = self.new_exp_folder
@@ -1252,7 +1258,6 @@ class Experiment(brainstate.util.PrettyObject):
 
         self.nb_inputs = results['in_shape']
         self.nb_outputs = results['out_shape']
-
         self.train_loader = results['train_loader']
         self.valid_loader = results['test_loader']
         if self.use_augm:
@@ -1267,6 +1272,8 @@ class Experiment(brainstate.util.PrettyObject):
 
         if self.net_type in ["LIF", "adLIF", "RLIF", "RadLIF"]:
             self.net = SNN(
+                threshold=self.args.threshold,
+                surrogate=self.args.surrogate,
                 input_shape=self.nb_inputs,
                 layer_sizes=layer_sizes,
                 neuron_type=self.net_type,
@@ -1276,8 +1283,6 @@ class Experiment(brainstate.util.PrettyObject):
                 use_readout_layer=True,
                 inp_scale=self.args.inp_scale,
                 rec_scale=self.args.rec_scale,
-                momentum=self.args.momentum,
-                relu_width=self.args.relu_width,
             )
             self.logger.warning(f"\nCreated new spiking model:\n {self.net}\n")
 
@@ -1300,7 +1305,10 @@ class Experiment(brainstate.util.PrettyObject):
             # Forward pass through network
             x = jnp.asarray(x)  # images:[bs, 1, 28, 28]
             y = jnp.asarray(y)
-            acc, loss = self.online_train(x, y)
+            if self.args.method == 'bptt':
+                acc, loss = self.bptt_train(x, y)
+            else:
+                acc, loss = self.online_train(x, y)
             losses.append(loss)
             accs.append(acc)
 
@@ -1368,6 +1376,7 @@ class Experiment(brainstate.util.PrettyObject):
         testing split of the dataset.
         """
         losses, accs = [], []
+        epoch_spike_rate = 0
 
         self.logger.warning("\n------ Begin Testing ------\n")
 
@@ -1389,3 +1398,8 @@ class Experiment(brainstate.util.PrettyObject):
         self.logger.warning(f"Test acc={test_acc}")
 
         self.logger.warning("\n-----------------------------\n")
+
+
+if __name__ == '__main__':
+    d = DyT(10)
+    print(d)

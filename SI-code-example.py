@@ -13,12 +13,12 @@
 # limitations under the License.
 # ==============================================================================
 
+import brainpy
+import brainscale
 import brainstate
 import braintools
 import jax
 import jax.numpy as jnp
-
-import brainscale
 
 
 class Linear(brainstate.nn.Module):
@@ -145,7 +145,7 @@ else:
 model.compile_graph(0, inputs[0])
 
 # retrieve parameters that need to compute gradients
-weights = net.states().subset(brainstate.ParamState)
+weights = net.states(brainstate.ParamState)
 
 
 # define loss function
@@ -167,3 +167,4 @@ def step_grad(last_grads, ix):
 indices = jax.numpy.arange(n_seq)
 init_grads = jax.tree.map(jax.numpy.zeros_like, weights.to_dict_values())
 grads = brainstate.transform.scan(step_grad, init_grads, (indices, inputs))
+

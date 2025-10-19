@@ -251,8 +251,8 @@ class LIFLayer(brainstate.nn.Module):
         return s
 
     def init_state(self, *args, **kwargs):
-        self.ut = brainstate.HiddenState(brainstate.random.rand(self.hidden_size))
-        self.st = brainstate.HiddenState(brainstate.random.rand(self.hidden_size))
+        self.ut = brainstate.HiddenState(jnp.zeros(self.hidden_size))
+        self.st = brainstate.HiddenState(jnp.zeros(self.hidden_size))
 
     def _lif_cell(self, Wx):
         alpha = self.alpha.execute()
@@ -448,8 +448,10 @@ class RLIFLayer(brainstate.nn.Module):
         w_mask = jnp.ones([self.hidden_size, self.hidden_size])
         w_mask = jnp.fill_diagonal(w_mask, 0, inplace=False)
         self.V = brainscale.nn.Linear(
-            self.hidden_size, self.hidden_size,
-            w_init=Orthogonal(rec_scale), b_init=None,
+            self.hidden_size,
+            self.hidden_size,
+            w_init=Orthogonal(rec_scale),
+            b_init=None,
             w_mask=w_mask
         )
         self.alpha = brainscale.ElemWiseParam(
@@ -564,8 +566,11 @@ class RadLIFLayer(brainstate.nn.Module):
         w_mask = jnp.ones([self.hidden_size, self.hidden_size])
         w_mask = jnp.fill_diagonal(w_mask, 0, inplace=False)
         self.V = brainscale.nn.Linear(
-            self.hidden_size, self.hidden_size,
-            w_init=Orthogonal(rec_scale), b_init=None, w_mask=w_mask
+            self.hidden_size,
+            self.hidden_size,
+            w_init=Orthogonal(rec_scale),
+            b_init=None,
+            w_mask=w_mask
         )
         self.alpha = brainscale.ElemWiseParam(
             brainstate.random.uniform(self.alpha_lim[0], self.alpha_lim[1], size=self.hidden_size),
@@ -677,7 +682,8 @@ class ReadoutLayer(brainstate.nn.Module):
         # Trainable parameters
         bound = 1 / self.input_size ** 0.5
         self.W = brainscale.nn.Linear(
-            self.input_size, self.hidden_size,
+            self.input_size,
+            self.hidden_size,
             b_init=braintools.init.Uniform(-bound, bound) if use_bias else None
         )
         self.alpha = brainscale.ElemWiseParam(
