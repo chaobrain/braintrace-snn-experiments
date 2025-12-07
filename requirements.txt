@@ -1,7 +1,0 @@
-BrainX
-h5py
-matplotlib
-msgpack
-tonic
-torch
-#torch --index-url https://download.pytorch.org/whl/cpu

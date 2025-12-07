@@ -13,12 +13,12 @@
 # limitations under the License.
 # ==============================================================================
 
+import brainpy
+import braintrace
 import brainstate
 import braintools
 import jax
 import jax.numpy as jnp
-
-import brainscale
 
 
 class Linear(brainstate.nn.Module):
@@ -26,8 +26,8 @@ class Linear(brainstate.nn.Module):
         self,
         n_in: int,
         n_out: int,
-        w_init=brainstate.init.KaimingNormal(),
-        b_init=brainstate.init.ZeroInit()
+        w_init=braintools.init.KaimingNormal(),
+        b_init=braintools.init.ZeroInit()
     ):
         super().__init__()
         self.in_size = (n_in,)
@@ -36,14 +36,14 @@ class Linear(brainstate.nn.Module):
         # parameters
         param = dict(weight=w_init([n_in, n_out]), bias=b_init([n_out]))
         # operations
-        self.weight_op = brainscale.ETraceParam(param, brainscale.MatMulOp())
+        self.weight_op = braintrace.ETraceParam(param, braintrace.MatMulOp())
 
     def update(self, x):
         # call the model by ".execute" the weight_op
         return self.weight_op.execute(x)
 
 
-class LIF(brainstate.nn.Neuron):
+class LIF(brainpy.state.Neuron):
     def __init__(
         self,
         in_size,
@@ -51,7 +51,7 @@ class LIF(brainstate.nn.Neuron):
         V_th: float = 1.,
         V_reset: float = 0.,
         V_rest: float = 0.,
-        spk_fun=brainstate.surrogate.ReluGrad(),
+        spk_fun=braintools.surrogate.ReluGrad(),
         spk_reset='soft'
     ):
         super().__init__(in_size, spk_fun=spk_fun, spk_reset=spk_reset)
@@ -72,7 +72,7 @@ class LIF(brainstate.nn.Neuron):
         # initialize the membrane potential
         bs = () if batch_size is None else (batch_size,)
         V = jax.numpy.full(bs + self.varshape, self.V_rest)
-        self.V = brainscale.ETraceState(V)
+        self.V = brainstate.HiddenState(V)
 
     def get_spike(self, V=None):
         V = self.V.value if V is None else V
@@ -109,8 +109,8 @@ class LIF_Delta_Net(brainstate.nn.Module):
     ):
         super().__init__()
         self.neu = LIF(n_rec, tau=tau_mem, V_th=V_th)
-        self.syn = brainstate.nn.DeltaProj(comm=Linear(n_in + n_rec, n_rec), post=self.neu)
-        self.out = brainscale.nn.LeakyRateReadout(n_rec, n_out, tau=5.0)
+        self.syn = brainpy.state.DeltaProj(comm=Linear(n_in + n_rec, n_rec), post=self.neu)
+        self.out = braintrace.nn.LeakyRateReadout(n_rec, n_out, tau=5.0)
 
     def update(self, i, spk):
         with brainstate.environ.context(i=i, t=i * brainstate.environ.get_dt()):
@@ -133,11 +133,11 @@ brainstate.nn.init_all_states(net)
 # online learning algorithm
 method = 'es-diag'  # or 'diag', 'hybrid'
 if method == 'es-diag':
-    model = brainscale.ES_D_RTRL(net, decay_or_rank=0.98)
+    model = braintrace.ES_D_RTRL(net, decay_or_rank=0.98)
 elif method == 'diag':
-    model = brainscale.D_RTRL(net)
+    model = braintrace.D_RTRL(net)
 elif method == 'hybrid':
-    model = brainscale.HybridDimVjpAlgorithm(net, decay_or_rank=0.98)
+    model = braintrace.HybridDimVjpAlgorithm(net, decay_or_rank=0.98)
 else:
     raise ValueError(f'Unknown online learning methods: {method}.')
 
@@ -145,7 +145,7 @@ else:
 model.compile_graph(0, inputs[0])
 
 # retrieve parameters that need to compute gradients
-weights = net.states().subset(brainstate.ParamState)
+weights = net.states(brainstate.ParamState)
 
 
 # define loss function
@@ -167,3 +167,4 @@ def step_grad(last_grads, ix):
 indices = jax.numpy.arange(n_seq)
 init_grads = jax.tree.map(jax.numpy.zeros_like, weights.to_dict_values())
 grads = brainstate.transform.scan(step_grad, init_grads, (indices, inputs))
+

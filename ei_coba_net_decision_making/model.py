@@ -15,6 +15,8 @@
 
 from typing import Callable
 
+import brainpy
+import braintrace
 import brainstate
 import braintools
 import brainunit as u
@@ -23,11 +25,10 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 
-import brainscale
 from general_utils import raster_plot
 
 
-class GIF(brainstate.nn.Neuron):
+class GIF(brainpy.state.Neuron):
     def __init__(
         self,
         size,
@@ -41,11 +42,11 @@ class GIF(brainstate.nn.Neuron):
         tau_I1: float = 50.,
         Ath: float = 1.,
         diff_spike: bool = True,
-        V_initializer: Callable = brainstate.init.Uniform(0., 1.),
-        I1_initializer: Callable = brainstate.init.ZeroInit(),
-        I2_initializer: Callable = brainstate.init.ZeroInit(),
-        Vth_initializer: Callable = brainstate.init.Constant(1.),
-        spike_fun: Callable = brainstate.surrogate.ReluGrad(),
+        V_initializer: Callable = braintools.init.Uniform(0., 1.),
+        I1_initializer: Callable = braintools.init.ZeroInit(),
+        I2_initializer: Callable = braintools.init.ZeroInit(),
+        Vth_initializer: Callable = braintools.init.Constant(1.),
+        spike_fun: Callable = braintools.surrogate.ReluGrad(),
         spk_reset: str = 'soft',
         name: str = None,
     ):
@@ -74,10 +75,10 @@ class GIF(brainstate.nn.Neuron):
         return self.varshape[0]
 
     def init_state(self):
-        self.V = brainscale.ETraceState(self.V_initializer(self.varshape))
-        self.I2 = brainscale.ETraceState(self.I2_initializer(self.varshape))
-        self.Vth = brainscale.ETraceState(self.Vth_initializer(self.varshape))
-        self.I1 = brainscale.ETraceState(self.I1_initializer(self.varshape))
+        self.V = brainstate.HiddenState(self.V_initializer(self.varshape))
+        self.I2 = brainstate.HiddenState(self.I2_initializer(self.varshape))
+        self.Vth = brainstate.HiddenState(self.Vth_initializer(self.varshape))
+        self.I1 = brainstate.HiddenState(self.I1_initializer(self.varshape))
 
     def update(self, x=0.):
         last_spk = self.get_spike()
@@ -125,7 +126,7 @@ class GIF(brainstate.nn.Neuron):
         return spk
 
 
-class Linear(brainscale.nn.Linear):
+class Linear(braintrace.nn.Linear):
     def __init__(self, n_in, n_out, w_init=None, sparsity: float = 0., sign: float = 1.):
         if sparsity > 0.:
             w_mask = brainstate.random.rand(n_in, n_out, dtype=jnp.float32) < sparsity
@@ -172,34 +173,55 @@ class _SNNEINet(brainstate.nn.Module):
         )
 
         # feedforward
-        self.ff2r = brainstate.nn.AlignPostProj(
-            comm=Linear(n_in, n_rec,
-                        w_init=brainstate.init.KaimingNormal(scale=args.ff_scale),
-                        sparsity=args.sparsity),
-            syn=brainscale.nn.Expon.desc(in_size=n_rec, tau=args.tau_syn, g_initializer=brainstate.init.ZeroInit()),
-            out=brainstate.nn.COBA.desc(E=E_exc),
+        self.ff2r = brainpy.state.AlignPostProj(
+            comm=Linear(
+                n_in,
+                n_rec,
+                w_init=braintools.init.KaimingNormal(scale=args.ff_scale),
+                sparsity=args.sparsity
+            ),
+            syn=brainpy.state.Expon.desc(
+                in_size=n_rec,
+                tau=args.tau_syn,
+                g_initializer=braintools.init.ZeroInit()
+            ),
+            out=brainpy.state.COBA.desc(E=E_exc),
             post=self.pop
         )
 
-        self.inh2r = brainstate.nn.AlignPostProj(
-            comm=Linear(self.n_inh, n_rec,
-                        w_init=brainstate.init.KaimingNormal(scale=args.rec_scale * args.w_ei_ratio),
-                        sparsity=args.sparsity),
-            syn=brainscale.nn.Expon.desc(in_size=n_rec, tau=args.tau_syn, g_initializer=brainstate.init.ZeroInit()),
-            out=brainstate.nn.COBA.desc(E=E_inh),
+        self.inh2r = brainpy.state.AlignPostProj(
+            comm=Linear(
+                self.n_inh,
+                n_rec,
+                w_init=braintools.init.KaimingNormal(scale=args.rec_scale * args.w_ei_ratio),
+                sparsity=args.sparsity
+            ),
+            syn=brainpy.state.Expon.desc(
+                in_size=n_rec,
+                tau=args.tau_syn,
+                g_initializer=braintools.init.ZeroInit()
+            ),
+            out=brainpy.state.COBA.desc(E=E_inh),
             post=self.pop
         )
-        self.exc2r = brainstate.nn.AlignPostProj(
-            comm=Linear(self.n_exc, n_rec,
-                        w_init=brainstate.init.KaimingNormal(scale=args.rec_scale),
-                        sparsity=args.sparsity),
-            syn=brainscale.nn.Expon.desc(in_size=n_rec, tau=args.tau_syn, g_initializer=brainstate.init.ZeroInit()),
-            out=brainstate.nn.COBA.desc(E=E_exc),
+        self.exc2r = brainpy.state.AlignPostProj(
+            comm=Linear(
+                self.n_exc,
+                n_rec,
+                w_init=braintools.init.KaimingNormal(scale=args.rec_scale),
+                sparsity=args.sparsity
+            ),
+            syn=brainpy.state.Expon.desc(
+                in_size=n_rec,
+                tau=args.tau_syn,
+                g_initializer=braintools.init.ZeroInit()
+            ),
+            out=brainpy.state.COBA.desc(E=E_exc),
             post=self.pop
         )
 
         # output
-        self.out = brainscale.nn.LeakyRateReadout(n_rec, n_out, tau=args.tau_out)
+        self.out = braintrace.nn.LeakyRateReadout(n_rec, n_out, tau=args.tau_out)
 
     def update(self, spk):
         e_sps, i_sps = jnp.split(self.pop.get_spike(), [self.n_exc], axis=-1)
@@ -208,7 +230,7 @@ class _SNNEINet(brainstate.nn.Module):
         self.inh2r(i_sps)
         return self.out(self.pop())
 
-    @brainstate.compile.jit(static_argnums=0)
+    @brainstate.transform.jit(static_argnums=0)
     def predict(self, batched_inputs):
         # batched_inputs: [n_seq, n_in]
         brainstate.nn.vmap_init_all_states(self, axis_size=batched_inputs.shape[1], state_tag='new')
@@ -220,7 +242,7 @@ class _SNNEINet(brainstate.nn.Module):
             rec_mem = self.pop.V.value
             return spk, rec_mem, out
 
-        res = brainstate.compile.for_loop(step, batched_inputs, pbar=brainstate.compile.ProgressBar(10))
+        res = brainstate.transform.for_loop(step, batched_inputs, pbar=brainstate.transform.ProgressBar(10))
         return res
 
     def visualize(self, inputs, n2show: int = 5, filename: str = None):

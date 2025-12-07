@@ -33,7 +33,7 @@ import jax.numpy as jnp
 import tonic
 
 import braintools
-import brainscale
+import braintrace
 import brainstate
 from data import get_dvs128_test_dataset, get_dvs128_train_val
 from model import Network, FiringRateState
@@ -43,12 +43,12 @@ from general_utils import copy_files, save_model_states, AverageMeter, setup_log
 def resume_model(
     args,
     model: brainstate.nn.Module,
-    optimizer: brainstate.optim.Optimizer,
+    optimizer: braintools.optim.Optimizer,
 ):
     assert args.resume_path is not None, "Resume path is not provided"
     assert os.path.exists(args.resume_path), "Resume path does not exist"
     assert isinstance(model, brainstate.nn.Module), "Model is not a brainstate.nn.Module"
-    assert isinstance(optimizer, brainstate.optim.Optimizer), "Optimizer is not a brainstate.optim.Optimizer"
+    assert isinstance(optimizer, braintools.optim.Optimizer), "Optimizer is not a braintools.optim.Optimizer"
 
     targets = {
         'epoch': 0.,
@@ -109,15 +109,15 @@ class Trainer(brainstate.util.PrettyObject):
         self.logger.warning(str(table))
 
         # optimizer and lr scheduler
-        scheduler = brainstate.optim.StepLR(
+        scheduler = braintools.optim.StepLR(
             args.learning_rate,
             step_size=args.lr_decay_epochs,
             gamma=args.lr_gamma
         )
         if args.use_rmsprop:
-            optimizer = brainstate.optim.RMSProp(lr=scheduler, weight_decay=0.9)
+            optimizer = braintools.optim.RMSProp(lr=scheduler, weight_decay=0.9)
         else:
-            optimizer = brainstate.optim.Adam(lr=scheduler)
+            optimizer = braintools.optim.Adam(lr=scheduler)
         optimizer.register_trainable_weights(self.trainable_weights)
         self.optimizer = optimizer
 
@@ -148,7 +148,7 @@ class Trainer(brainstate.util.PrettyObject):
         else:
             return 1.
 
-    @brainstate.compile.jit(static_argnums=0)
+    @brainstate.transform.jit(static_argnums=0)
     def predict(self, inputs: jax.Array, targets: jax.Array):
         inputs = jnp.asarray(inputs)
         inputs = jnp.transpose(inputs, (0, 1, 3, 4, 2))
@@ -162,11 +162,11 @@ class Trainer(brainstate.util.PrettyObject):
 
         # forward propagation
         def _step(inp):
-            out = brainstate.augment.vmap(model, in_states=model.states('hidden'))(inp)
+            out = brainstate.transform.vmap(model, in_states=model.states('hidden'))(inp)
             loss = self._loss(out, targets)
             return loss, out
 
-        losses, outs = brainstate.compile.for_loop(_step, inputs)
+        losses, outs = brainstate.transform.for_loop(_step, inputs)
 
         # firing rate
         spike_sparsity = self._spike_sparsity(n_time, n_batch)
@@ -175,7 +175,7 @@ class Trainer(brainstate.util.PrettyObject):
         acc = self._acc(outs, targets)
         return losses.mean(), acc, spike_sparsity
 
-    @brainstate.compile.jit(static_argnums=(0,))
+    @brainstate.transform.jit(static_argnums=(0,))
     def etrace_train(self, inputs, targets):
         inputs = jnp.asarray(inputs)
         inputs = jnp.transpose(inputs, (0, 1, 3, 4, 2))
@@ -186,13 +186,13 @@ class Trainer(brainstate.util.PrettyObject):
         # initialize the online learning model
         model = brainstate.nn.EnvironContext(self.model, fit=True)
         if self.args.method == 'es-d-rtrl':
-            model = brainscale.IODimVjpAlgorithm(model, self.args.etrace_decay, vjp_method=self.args.vjp_method)
+            model = braintrace.IODimVjpAlgorithm(model, self.args.etrace_decay, vjp_method=self.args.vjp_method)
         elif self.args.method == 'd-rtrl':
-            model = brainscale.ParamDimVjpAlgorithm(model, vjp_method=self.args.vjp_method)
+            model = braintrace.ParamDimVjpAlgorithm(model, vjp_method=self.args.vjp_method)
         else:
             raise ValueError(f'Unknown online learning methods: {self.args.method}.')
 
-        @brainstate.augment.vmap_new_states(state_tag='new', axis_size=n_batch)
+        @brainstate.transform.vmap_new_states(state_tag='new', axis_size=n_batch)
         def init():
             """
             Initialize the model states and compile the computation graph.
@@ -221,7 +221,7 @@ class Trainer(brainstate.util.PrettyObject):
 
         def _etrace_step(prev_grads, x):
             # no need to return weights and states, since they are generated then no longer needed
-            f_grad = brainstate.augment.grad(_etrace_grad, self.trainable_weights, has_aux=True, return_value=True)
+            f_grad = brainstate.transform.grad(_etrace_grad, self.trainable_weights, has_aux=True, return_value=True)
             cur_grads, local_loss, out = f_grad(x)
             next_grads = jax.tree.map(lambda a, b: a + b, prev_grads, cur_grads)
             return next_grads, (out, local_loss)
@@ -229,7 +229,7 @@ class Trainer(brainstate.util.PrettyObject):
         def _etrace_train(inputs_):
             # forward propagation
             grads = jax.tree.map(lambda a: jnp.zeros_like(a), self.trainable_weights.to_dict_values())
-            grads, (outs, losses) = brainstate.compile.scan(_etrace_step, grads, inputs_)
+            grads, (outs, losses) = brainstate.transform.scan(_etrace_step, grads, inputs_)
             # gradient updates
             if self.args.use_grad_clipping:
                 grads = brainstate.functional.clip_grad_norm(grads, self.args.grad_clip_norm)
@@ -239,7 +239,7 @@ class Trainer(brainstate.util.PrettyObject):
         # running indices
         if self.args.warmup_ratio > 0:
             n_sim = brainstate.util.split_total(inputs.shape[0], self.args.warmup_ratio)
-            brainstate.compile.for_loop(model, inputs[:n_sim])
+            brainstate.transform.for_loop(model, inputs[:n_sim])
             loss, outs = _etrace_train(inputs[n_sim:])
         else:
             loss, outs = _etrace_train(inputs)
@@ -252,7 +252,7 @@ class Trainer(brainstate.util.PrettyObject):
         # returns
         return loss, acc, spike_sparsity
 
-    @brainstate.compile.jit(static_argnums=(0,))
+    @brainstate.transform.jit(static_argnums=(0,))
     def bptt_train(self, inputs, targets):
         inputs = jnp.asarray(inputs)
         inputs = jnp.transpose(inputs, (0, 1, 3, 4, 2))
@@ -270,14 +270,14 @@ class Trainer(brainstate.util.PrettyObject):
         def _bptt_grad_step():
             if self.args.warmup_ratio > 0:
                 n_sim = brainstate.util.split_total(inputs.shape[0], self.args.warmup_ratio)
-                _ = brainstate.compile.for_loop(model, inputs[:n_sim])
-                outs, losses = brainstate.compile.for_loop(_run_step_train, inputs[n_sim:])
+                _ = brainstate.transform.for_loop(model, inputs[:n_sim])
+                outs, losses = brainstate.transform.for_loop(_run_step_train, inputs[n_sim:])
             else:
-                outs, losses = brainstate.compile.for_loop(_run_step_train, inputs)
+                outs, losses = brainstate.transform.for_loop(_run_step_train, inputs)
             return losses.mean(), outs
 
         # gradients
-        grads, loss, outs = brainstate.augment.grad(
+        grads, loss, outs = brainstate.transform.grad(
             _bptt_grad_step, self.trainable_weights, has_aux=True, return_value=True)()
 
         # optimization

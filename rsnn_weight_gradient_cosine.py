@@ -57,7 +57,7 @@ def define_device_args() -> argparse.Namespace:
 
 define_device_args()
 
-import brainscale
+import braintrace
 import braintools
 import jax
 
@@ -172,7 +172,7 @@ def compare_gradient_of_five_layer_net_by_random_data():
     n_batch = 16
     n_seq = 1000
     n_rank = 10
-    model = ETraceDenseNet(n_in, n_rec, n_out, args, spk_fun=brainstate.surrogate.ReluGrad(width=0.5))
+    model = ETraceDenseNet(n_in, n_rec, n_out, args, spk_fun=braintools.surrogate.ReluGrad(width=0.5))
     weights = model.states().subset(brainstate.ParamState)
 
     def step_to_visualize(i, inp):
@@ -187,9 +187,9 @@ def compare_gradient_of_five_layer_net_by_random_data():
 
     def compute_etrace_grad(inputs, targets):
         # etrace = nn.DiagExpSmOnAlgorithm(partial(loss_fun, target=targets), decay_or_rank=n_rank)
-        etrace = brainscale.ParamDimVjpAlgorithm(partial(loss_fun, target=targets), )
+        etrace = braintrace.ParamDimVjpAlgorithm(partial(loss_fun, target=targets), )
         etrace.compile_graph(0, jax.ShapeDtypeStruct((n_batch, n_in), brainstate.environ.dftype()))
-        f_grad = brainstate.augment.grad(etrace, grad_states=weights)
+        f_grad = brainstate.transform.grad(etrace, grad_states=weights)
 
         def step(prev_grad, inp):
             i, inp = inp
@@ -206,7 +206,7 @@ def compare_gradient_of_five_layer_net_by_random_data():
             losses = brainstate.transform.for_loop(partial(loss_fun, target=targets), indices, inputs)
             return losses.sum()
 
-        return brainstate.augment.grad(global_loss, grad_states=weights)()
+        return brainstate.transform.grad(global_loss, grad_states=weights)()
 
     indices = jnp.arange(n_seq)
     inp_spks = brainstate.random.random((n_seq, n_batch, n_in)) < 0.1
@@ -234,7 +234,7 @@ def compare_gradient_of_five_layer_net_by_random_data():
 
 
 class ETraceDenseNetV2(NetWithMemSpkRegularize):
-    def __init__(self, n_in, n_rec, n_out, model_cls, args, spk_fun: Callable = brainstate.surrogate.ReluGrad()):
+    def __init__(self, n_in, n_rec, n_out, model_cls, args, spk_fun: Callable = braintools.surrogate.ReluGrad()):
         super().__init__()
 
         # arguments
@@ -245,8 +245,8 @@ class ETraceDenseNetV2(NetWithMemSpkRegularize):
         tau_o = args.pop('tau_o')
         kwargs = args.pop('kwargs', dict())
 
-        rec_init = brainstate.init.KaimingNormal(scale=args.pop('rec_wscale'))
-        ff_init = brainstate.init.KaimingNormal(scale=args.pop('ff_wscale'))
+        rec_init = braintools.init.KaimingNormal(scale=args.pop('rec_wscale'))
+        ff_init = braintools.init.KaimingNormal(scale=args.pop('ff_wscale'))
 
         # recurrent layers
         self.rec_layers = []
@@ -264,11 +264,11 @@ class ETraceDenseNetV2(NetWithMemSpkRegularize):
             self.rec_layers.append(rec)
 
         # output layer
-        self.out = brainscale.nn.LeakyRateReadout(
+        self.out = braintrace.nn.LeakyRateReadout(
             in_size=n_rec,
             out_size=n_out,
             tau=tau_o,
-            w_init=brainstate.init.KaimingNormal(),
+            w_init=braintools.init.KaimingNormal(),
             name='out',
         )
 
@@ -278,7 +278,7 @@ class ETraceDenseNetV2(NetWithMemSpkRegularize):
         return self.out(x)
 
     def visualize_variables(self) -> dict:
-        neurons = tuple(self.nodes().subset(brainstate.nn.Neuron).unique().values())
+        neurons = tuple(self.nodes().subset(brainpy.state.Neuron).unique().values())
         outs = {
             'out_v': self.out.r.value,
             'rec_v': [l.V.value for l in neurons],
@@ -340,9 +340,9 @@ def _compare(
         loss_fn = Model(target=targets)
 
         if method == 'diag_expsm':
-            etrace = brainscale.IODimVjpAlgorithm(loss_fn, decay_or_rank=n_rank)
+            etrace = braintrace.IODimVjpAlgorithm(loss_fn, decay_or_rank=n_rank)
         elif method == 'diag':
-            etrace = brainscale.ParamDimVjpAlgorithm(loss_fn)
+            etrace = braintrace.ParamDimVjpAlgorithm(loss_fn)
         else:
             raise ValueError(f'Unknown method {method}')
         etrace.compile_graph(0, jax.ShapeDtypeStruct([model.n_in], brainstate.environ.dftype()))
@@ -379,7 +379,7 @@ def _compare(
             return losses.sum()
 
         brainstate.nn.init_all_states(model)
-        return brainstate.augment.grad(global_loss, grad_states=weights)()
+        return brainstate.transform.grad(global_loss, grad_states=weights)()
 
     def flatten(tree):
         leaves = jax.tree.leaves(tree)
@@ -618,7 +618,7 @@ def compare_gradient_on_random_data():
 
 def compare_gradient_approx_when_recurrent_size_increases(fn='analysis/jac_cosine_sim', frac_sim=0.99):
     brainstate.random.seed(1)
-    spk_fun = brainstate.surrogate.ReluGrad(width=1.)
+    spk_fun = braintools.surrogate.ReluGrad(width=1.)
 
     rec_sizes = [10, 50, 100, 300, 500, 1000, 2000, 4000, 8000, 10000, 20000, 40000]
     rec_sizes = [10, 50, 100, 300, 500, 1000, 2000, 4000]
@@ -685,7 +685,7 @@ def compare_gradient_approx_when_recurrent_size_increases(fn='analysis/jac_cosin
 
 def compare_gradient_approx_when_ff_conn_increases(fn='analysis/jac_cosine_sim', frac_sim=0.99):
     brainstate.random.seed(1)
-    spk_fun = brainstate.surrogate.ReluGrad(width=1.)
+    spk_fun = braintools.surrogate.ReluGrad(width=1.)
     n_rec = 200
     n_layer = 1
 
@@ -750,7 +750,7 @@ def compare_gradient_approx_when_ff_conn_increases(fn='analysis/jac_cosine_sim',
 
 def compare_gradient_approx_when_rec_conn_increases(fn='analysis/jac_cosine_sim', frac_sim=0.99):
     brainstate.random.seed(1)
-    spk_fun = brainstate.surrogate.ReluGrad(width=1.)
+    spk_fun = braintools.surrogate.ReluGrad(width=1.)
     n_rec = 200
     n_layer = 1
 

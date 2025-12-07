@@ -29,8 +29,8 @@ num_worker = 0 if platform.system() == 'Windows' else 10
 
 def get_dvs128_train_val(
     args,
-    split: float = 0.85,
-    augmentation: bool = False
+    split: float = 1.0,
+    augmentation: bool = False,
 ):
     """
     Make dataloaders for train and validation sets
@@ -207,10 +207,8 @@ if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--data', type=str, default='../data', help='path to datasets')
     argparser.add_argument('--cache', type=str, default='../cache', help='path to temp cache')
-    argparser.add_argument('--frame-time', type=int, default=25,
-                           help='Time in ms to collect events into each frame')
-    argparser.add_argument('--event-agg-method', type=str, default='bool',
-                           choices=['mean', 'diff', 'bool', 'none'])
+    argparser.add_argument('--frame-time', type=int, default=25, help='Time in ms to collect events into each frame')
+    argparser.add_argument('--event-agg-method', type=str, default='bool', choices=['mean', 'diff', 'bool', 'none'])
     argparser.add_argument('--batch-size', type=int, default=256)
     args = argparser.parse_args()
 

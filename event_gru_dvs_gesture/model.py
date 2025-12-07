@@ -4,7 +4,7 @@ Gated Recurrent Unit
 
 from typing import Callable, Union, Optional
 
-import brainscale
+import braintrace
 import brainstate
 import brainunit as u
 import jax
@@ -24,7 +24,7 @@ class FiringRateState(brainstate.ShortTermState):
     pass
 
 
-class SpikeFunction(brainstate.surrogate.Surrogate):
+class SpikeFunction(braintools.surrogate.Surrogate):
     """
     A surrogate gradient function for spiking neural networks.
 
@@ -82,10 +82,10 @@ class LinearDropConn(brainstate.nn.Module):
         self,
         in_size: brainstate.typing.Size,
         out_size: brainstate.typing.Size,
-        w_init: Initializer = brainstate.init.KaimingNormal(),
-        b_init: Optional[Initializer] = brainstate.init.ZeroInit(),
+        w_init: Initializer = braintools.init.KaimingNormal(),
+        b_init: Optional[Initializer] = braintools.init.ZeroInit(),
         name: Optional[str] = None,
-        param_type: type = brainscale.ETraceParam,
+        param_type: type = braintrace.ETraceParam,
         drop_conn_rate: float = 0.0,
         drop_conn_part: str = 'all'
     ):
@@ -101,12 +101,12 @@ class LinearDropConn(brainstate.nn.Module):
         # weights
         w_shape = (self.in_size[-1], self.out_size[-1])
         b_shape = (self.out_size[-1],)
-        params = dict(weight=brainstate.init.param(w_init, w_shape, allow_none=False))
+        params = dict(weight=braintools.init.param(w_init, w_shape, allow_none=False))
         if b_init is not None:
-            params['bias'] = brainstate.init.param(b_init, b_shape, allow_none=False)
+            params['bias'] = braintools.init.param(b_init, b_shape, allow_none=False)
 
         # weight + op
-        self.weight_op = param_type(params, op=brainscale.MatMulOp(weight_fn=self.weight_fn))
+        self.weight_op = param_type(params, op=braintrace.MatMulOp(weight_fn=self.weight_fn))
 
     def weight_fn(self, weight):
         fit = brainstate.environ.get('fit')
@@ -200,10 +200,10 @@ class EGRU(brainstate.nn.Module):
         hidden_size: brainstate.typing.Size,
         zoneout_prob: float = 0.0,
         thr_mean: float = 0.3,
-        w_init: Union[brainstate.typing.ArrayLike, Callable] = brainstate.init.XavierNormal(),
-        b_init: Union[brainstate.typing.ArrayLike, Callable] = brainstate.init.ZeroInit(),
-        state_init: Union[brainstate.typing.ArrayLike, Callable] = brainstate.init.ZeroInit(),
-        param_type: Callable = brainscale.ETraceParam,
+        w_init: Union[brainstate.typing.ArrayLike, Callable] = braintools.init.XavierNormal(),
+        b_init: Union[brainstate.typing.ArrayLike, Callable] = braintools.init.ZeroInit(),
+        state_init: Union[brainstate.typing.ArrayLike, Callable] = braintools.init.ZeroInit(),
+        param_type: Callable = braintrace.ETraceParam,
         spk_fun: Callable = SpikeFunction(dampening_factor=0.7, pseudo_derivative_support=1.0),
         include_trace: bool = False,
     ):
@@ -225,18 +225,18 @@ class EGRU(brainstate.nn.Module):
 
         # parameters
         params = dict(w_init=w_init, b_init=b_init, param_type=param_type)
-        self.Wz = brainscale.nn.Linear(self.in_size[-1] + self.out_size[-1], self.out_size[-1], **params)
+        self.Wz = braintrace.nn.Linear(self.in_size[-1] + self.out_size[-1], self.out_size[-1], **params)
         # self.Wz = LinearDropConn(self.in_size[-1] + self.out_size[-1], self.out_size[-1],
         #                          drop_conn_rate=dropconn_prob,
         #                          drop_conn_part='right',
         #                          **params)
-        self.Wr = brainscale.nn.Linear(self.in_size[-1] + self.out_size[-1], self.out_size[-1], **params)
+        self.Wr = braintrace.nn.Linear(self.in_size[-1] + self.out_size[-1], self.out_size[-1], **params)
         # self.Wr = LinearDropConn(self.in_size[-1] + self.out_size[-1], self.out_size[-1],
         #                          drop_conn_rate=dropconn_prob,
         #                          drop_conn_part='right',
         #                          **params)
-        self.Whx = brainscale.nn.Linear(self.in_size[-1], self.out_size[-1], **params)
-        self.Whr = brainscale.nn.Linear(self.out_size[-1], self.out_size[-1], **params)
+        self.Whx = braintrace.nn.Linear(self.in_size[-1], self.out_size[-1], **params)
+        self.Whr = braintrace.nn.Linear(self.out_size[-1], self.out_size[-1], **params)
         # self.Whr = LinearDropConn(self.out_size[-1], self.out_size[-1],
         #                           drop_conn_rate=dropconn_prob,
         #                           drop_conn_part='all',
@@ -247,35 +247,35 @@ class EGRU(brainstate.nn.Module):
         beta = 3
         alpha = beta * thr_mean / (1 - thr_mean)
         thr = brainstate.random.beta(alpha, beta, self.out_size[-1])
-        self.thr = brainscale.ElemWiseParam(thr)
+        self.thr = braintrace.ElemWiseParam(thr)
 
     def init_state(self, batch_size: int = None, **kwargs):
         # bst.random.random(1)
 
         # hidden state for all sequences.
-        self.h = brainscale.ETraceState(brainstate.init.param(self.state_init, self.out_size, batch_size))
+        self.h = brainstate.HiddenState(braintools.init.param(self.state_init, self.out_size, batch_size))
 
         # the output gate for all sequences (values: 0 or 1).
-        self.o = brainstate.HiddenState(brainstate.init.param(self.state_init, self.out_size, batch_size))
-        # self.o = brainscale.ETraceState(bst.init.param(self.state_init, self.out_size, batch_size))
+        self.o = brainstate.HiddenState(braintools.init.param(self.state_init, self.out_size, batch_size))
+        # self.o = brainstate.HiddenState(bst.init.param(self.state_init, self.out_size, batch_size))
 
         # internal state variable
-        self.y = brainscale.ETraceState(brainstate.init.param(self.state_init, self.out_size, batch_size))
+        self.y = brainstate.HiddenState(braintools.init.param(self.state_init, self.out_size, batch_size))
 
         # # firing rate
-        self.fr = FiringRateState(brainstate.init.param(brainstate.init.ZeroInit(), self.out_size, batch_size))
+        self.fr = FiringRateState(braintools.init.param(braintools.init.ZeroInit(), self.out_size, batch_size))
 
         # smoothed output values, can be beneficial for training.
         if self.include_trace:
-            self.tr = brainscale.ETraceState(brainstate.init.param(self.state_init, self.out_size, batch_size))
+            self.tr = brainstate.HiddenState(braintools.init.param(self.state_init, self.out_size, batch_size))
 
     def reset_state(self, batch_size: int = None, **kwargs):
-        self.h.value = brainstate.init.param(self.state_init, self.out_size, batch_size)
-        self.o.value = brainstate.init.param(self.state_init, self.out_size, batch_size)
-        self.y.value = brainstate.init.param(self.state_init, self.out_size, batch_size)
-        self.fr.value = brainstate.init.param(brainstate.init.ZeroInit(), self.out_size, batch_size)
+        self.h.value = braintools.init.param(self.state_init, self.out_size, batch_size)
+        self.o.value = braintools.init.param(self.state_init, self.out_size, batch_size)
+        self.y.value = braintools.init.param(self.state_init, self.out_size, batch_size)
+        self.fr.value = braintools.init.param(braintools.init.ZeroInit(), self.out_size, batch_size)
         if self.include_trace:
-            self.tr.value = brainstate.init.param(self.state_init, self.out_size, batch_size)
+            self.tr.value = braintools.init.param(self.state_init, self.out_size, batch_size)
 
     def update(self, x):
         old_h = self.h.value
@@ -444,52 +444,52 @@ class Network(brainstate.nn.Module):
 
         # Max pooling
         self.pool = brainstate.nn.Sequential(
-            brainscale.nn.MaxPool2d(in_size=input_size, kernel_size=128 // frame_size),
+            braintrace.nn.MaxPool2d(in_size=input_size, kernel_size=128 // frame_size),
             MergeEvents.desc(method=event_agg_method, flatten=not use_cnn),
         )
 
         if self.use_cnn:
             self.cnn = brainstate.nn.Sequential(
-                brainscale.nn.Conv2d(self.pool.out_size, out_channels=64, kernel_size=11, stride=4, padding=2),
-                brainscale.nn.ReLU(),
-                brainscale.nn.MaxPool2d.desc(kernel_size=3, stride=2),
-                brainscale.nn.Conv2d.desc(out_channels=192, kernel_size=5, padding=2),
-                brainscale.nn.ReLU(),
-                brainscale.nn.MaxPool2d.desc(kernel_size=3, stride=2),
-                brainscale.nn.Conv2d.desc(out_channels=384, kernel_size=3, padding=1),
-                brainscale.nn.ReLU(),
+                braintrace.nn.Conv2d(self.pool.out_size, out_channels=64, kernel_size=11, stride=4, padding=2),
+                braintrace.nn.ReLU(),
+                braintrace.nn.MaxPool2d.desc(kernel_size=3, stride=2),
+                braintrace.nn.Conv2d.desc(out_channels=192, kernel_size=5, padding=2),
+                braintrace.nn.ReLU(),
+                braintrace.nn.MaxPool2d.desc(kernel_size=3, stride=2),
+                braintrace.nn.Conv2d.desc(out_channels=384, kernel_size=3, padding=1),
+                braintrace.nn.ReLU(),
                 (
-                    brainscale.nn.MaxPool2d.desc(kernel_size=3, stride=2)
+                    braintrace.nn.MaxPool2d.desc(kernel_size=3, stride=2)
                     if frame_size >= 64 else
-                    brainscale.nn.Identity()
+                    braintrace.nn.Identity()
                 ),
-                brainscale.nn.Conv2d.desc(out_channels=256, kernel_size=3, padding=1),
-                brainscale.nn.ReLU(),
+                braintrace.nn.Conv2d.desc(out_channels=256, kernel_size=3, padding=1),
+                braintrace.nn.ReLU(),
                 (
-                    brainscale.nn.MaxPool2d.desc(kernel_size=3, stride=2)
+                    braintrace.nn.MaxPool2d.desc(kernel_size=3, stride=2)
                     if frame_size >= 128 else
-                    brainscale.nn.Identity()
+                    braintrace.nn.Identity()
                 ),
-                brainscale.nn.Conv2d.desc(out_channels=256, kernel_size=3, padding=1),
-                brainscale.nn.ReLU(),
-                brainscale.nn.Flatten.desc(),
-                brainscale.nn.Linear.desc(out_size=512),
+                braintrace.nn.Conv2d.desc(out_channels=256, kernel_size=3, padding=1),
+                braintrace.nn.ReLU(),
+                braintrace.nn.Flatten.desc(),
+                braintrace.nn.Linear.desc(out_size=512),
                 (
-                    brainscale.nn.Dropout(1 - self.layer_dropout)
+                    braintrace.nn.Dropout(1 - self.layer_dropout)
                     if self.layer_dropout > 0. else
-                    brainscale.nn.Identity()
+                    braintrace.nn.Identity()
                 ),
             )
         else:
-            self.cnn = brainscale.nn.Flatten(in_size=self.pool.out_size)
+            self.cnn = braintrace.nn.Flatten(in_size=self.pool.out_size)
 
         rnn_layers = []
         input_size = self.cnn.out_size
         for layer_idx in range(n_rnn_layer):
             if self.rnn_type == 'lstm':
-                rnn = brainscale.nn.LSTMCell(input_size, self.n_rnn_hidden)
+                rnn = braintrace.nn.LSTMCell(input_size, self.n_rnn_hidden)
             elif self.rnn_type == 'gru':
-                rnn = brainscale.nn.GRUCell(input_size, self.n_rnn_hidden)
+                rnn = braintrace.nn.GRUCell(input_size, self.n_rnn_hidden)
             elif self.rnn_type == 'event-gru':
                 rnn = EGRU(
                     input_size,
@@ -505,9 +505,9 @@ class Network(brainstate.nn.Module):
 
             input_size = rnn.out_size
             # if self.layer_dropout > 0. and layer_idx + 1 < n_rnn_layer:
-            #     rnn_layers.append(brainscale.nn.Dropout(1 - self.layer_dropout))
+            #     rnn_layers.append(braintrace.nn.Dropout(1 - self.layer_dropout))
         self.rnn = brainstate.nn.Sequential(*rnn_layers)
-        self.fc = brainscale.nn.Linear(self.n_rnn_hidden, n_class)
+        self.fc = braintrace.nn.Linear(self.n_rnn_hidden, n_class)
 
     def update(self, x):
         x = self.pool(x)
@@ -528,7 +528,7 @@ def f_run():
         y = brainstate.nn.Vmap(gru, vmap_states='hidden')(brainstate.random.randn(batch_size, 10))
         return (y - 1.).sum()
 
-    f_grad = brainstate.augment.grad(loss, grad_states=gru.states(brainstate.ParamState))
+    f_grad = brainstate.transform.grad(loss, grad_states=gru.states(brainstate.ParamState))
     print(f_grad)
     print(f_grad())
 

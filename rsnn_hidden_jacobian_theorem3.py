@@ -58,7 +58,7 @@ if platform.system() == 'Linux':
 
 import jax
 from fast_histogram import histogram1d
-import brainscale
+import braintrace
 import brainstate
 import braintools
 import numpy as np
@@ -125,26 +125,26 @@ def _compare(
     tau_mem: float = 10.,
     ff_wscale: float = 4.,
     rec_wscale: float = 4.,
-    spk_fun=brainstate.surrogate.ReluGrad(),
-    # spk_fun=lambda x: jax.lax.stop_gradient(brainstate.surrogate.relu_grad(x)),
+    spk_fun=braintools.surrogate.ReluGrad(),
+    # spk_fun=lambda x: jax.lax.stop_gradient(braintools.surrogate.relu_grad(x)),
     kwargs: dict = None,
     num_data=16,
 ):
-    @brainstate.compile.jit
+    @brainstate.transform.jit
     def _run_the_model(inputs):
         model = Model(
             model_cls(
                 n_in=num_in,
                 n_rec=num_rec,
-                ff_init=brainstate.init.KaimingNormal(scale=ff_wscale),
-                rec_init=brainstate.init.KaimingNormal(scale=rec_wscale),
+                ff_init=braintools.init.KaimingNormal(scale=ff_wscale),
+                rec_init=braintools.init.KaimingNormal(scale=rec_wscale),
                 spk_fun=spk_fun,
                 tau_mem=tau_mem,
                 **(kwargs or {})
             )
         )
         brainstate.nn.init_all_states(model, inputs.shape[1])
-        etrace_model = brainscale.DiagTruncatedAlgorithm(model, n_truncation=inputs.shape[0])
+        etrace_model = braintrace.DiagTruncatedAlgorithm(model, n_truncation=inputs.shape[0])
         etrace_model.compile_graph(0, inputs[0])
 
         def _step_to_run(ri, inp):
@@ -158,7 +158,7 @@ def _compare(
             return _compute_cosine_similarity(xs[0], dfs, ri + 1)
 
         indices = np.arange(inputs.shape[0])
-        cosines = brainstate.compile.for_loop(_step_to_run, indices, inputs)
+        cosines = brainstate.transform.for_loop(_step_to_run, indices, inputs)
         etrace_xs = [a.value for a in etrace_model.etrace_xs.values()]
         etrace_dfs = {
             etrace_model.graph.hidden_outvar_to_hidden[k[1]].name: v.value
@@ -258,7 +258,7 @@ def compare_jacobian_approx_on_real_dataset(fn='analysis/jac_cosine_sim_theorem3
                 model_cls=model,
                 num_data=100,
                 # spk_fun=lambda x: jnp.asarray(x > 0., dtype=x.dtype),
-                spk_fun=brainstate.surrogate.ReluGrad(),
+                spk_fun=braintools.surrogate.ReluGrad(),
                 **args,
             )
 
