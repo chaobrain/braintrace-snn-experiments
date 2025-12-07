@@ -1,5 +1,4 @@
-# ``BrainScale`` experiments on spiking neural networks
-
+# ``BrainTrace`` experiments on spiking neural networks
 
 
 
@@ -8,13 +7,13 @@
 
 ```bash
 
-pip install BrainX[cuda12]==2025.10.16
-pip install BrainX[cuda13]==2025.10.16
+pip install BrainX[cuda12]
+# or
+pip install BrainX[cuda13]
 pip install h5py matplotlib msgpack tonic prettytable
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 ```
-
 
 
 
@@ -79,7 +78,6 @@ python task-memory-and-speed-evaluation-tpu.py
 
 
 
-
 ## RSNN image classification on Gesture dataset
 
 The code below is used to train a spiking neural network on the Gesture dataset using different methods (BPTT, ES-D-RTRL, D-RTRL).
@@ -129,49 +127,36 @@ python main.py --batch-size 64 --units 1024 \
 ## RSNN classification on SHD dataset
 
 
-The codebase is located in `./sparch` directory. The code below is used to train a spiking neural network on the SHD dataset using different methods (BPTT, ES-D-RTRL, D-RTRL).
-
-BPTT
-
-```bash
-python main.py --model_type LIF --dataset_name shd  --nb_epochs 100 --method bptt --nb_hiddens 1024
-python main.py --model_type RLIF --dataset_name shd  --nb_epochs 100 --method bptt --nb_hiddens 1024
-python main.py --model_type adLIF --dataset_name shd --nb_epochs 100 --method bptt --nb_hiddens 1024
-python main.py --model_type RadLIF --dataset_name shd --nb_epochs 100 --method bptt --nb_hiddens 1024
-```
-
-D-RTRL
-
-```bash
-python main.py --model_type LIF --dataset_name shd  --nb_epochs 100 --method d-rtrl --nb_hiddens 1024
-python main.py --model_type RLIF --dataset_name shd  --nb_epochs 100 --method d-rtrl --nb_hiddens 1024
-python main.py --model_type adLIF --dataset_name shd --nb_epochs 100 --method d-rtrl --nb_hiddens 1024
-python main.py --model_type RadLIF --dataset_name shd --nb_epochs 100 --method d-rtrl --nb_hiddens 1024
-```
+See the codebase in [braintrace-shd-experiments](https://github.com/chaobrain/braintrace-shd-experiments). 
 
 
-ES-D-RTRL
+[//]: # ()
+[//]: # (## Citations)
 
-```bash
-python main.py --model_type LIF --dataset_name shd --nb_epochs 100 --method esd-rtrl --nb_hiddens 1024 --etrace_decay 0.8
-python main.py --model_type RLIF --dataset_name shd --nb_epochs 100 --method esd-rtrl --nb_hiddens 1024 --etrace_decay 0.8
-python main.py --model_type adLIF --dataset_name shd --nb_epochs 100 --method esd-rtrl --nb_hiddens 1024 --etrace_decay 0.98
-python main.py --model_type RadLIF --dataset_name shd --nb_epochs 100 --method esd-rtrl --nb_hiddens 1024 --etrace_decay 0.98
-```
+[//]: # ()
+[//]: # (```text)
 
-## Citations
+[//]: # (@article {Wang2024.09.24.614728,)
 
-```text
-@article {Wang2024.09.24.614728,
-	author = {Wang, Chaoming and Dong, Xingsi and Ji, Zilong and Jiang, Jiedong and Liu, Xiao and Wu, Si},
-	title = {BrainScale: Enabling Scalable Online Learning in Spiking Neural Networks},
-	elocation-id = {2024.09.24.614728},
-	year = {2025},
-	doi = {10.1101/2024.09.24.614728},
-	publisher = {Cold Spring Harbor Laboratory},
-	URL = {https://www.biorxiv.org/content/early/2025/07/27/2024.09.24.614728},
-	eprint = {https://www.biorxiv.org/content/early/2025/07/27/2024.09.24.614728.full.pdf},
-	journal = {bioRxiv}
-}
-```
+[//]: # (	author = {Wang, Chaoming and Dong, Xingsi and Ji, Zilong and Jiang, Jiedong and Liu, Xiao and Wu, Si},)
+
+[//]: # (	title = {BrainTrace: Enabling Scalable Online Learning in Spiking Neural Networks},)
+
+[//]: # (	elocation-id = {2024.09.24.614728},)
+
+[//]: # (	year = {2025},)
+
+[//]: # (	doi = {10.1101/2024.09.24.614728},)
+
+[//]: # (	publisher = {Cold Spring Harbor Laboratory},)
+
+[//]: # (	URL = {https://www.biorxiv.org/content/early/2025/07/27/2024.09.24.614728},)
+
+[//]: # (	eprint = {https://www.biorxiv.org/content/early/2025/07/27/2024.09.24.614728.full.pdf},)
+
+[//]: # (	journal = {bioRxiv})
+
+[//]: # (})
+
+[//]: # (```)
 

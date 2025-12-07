@@ -57,7 +57,7 @@ import time
 from functools import partial
 from typing import Callable
 
-import brainscale
+import braintrace
 import brainstate
 import brainunit as u
 import jax
@@ -259,7 +259,7 @@ def _check_jacobian(
     # diagonal
     # diagonal1 = brainstate.transform.vector_grad(f, argnums=0)(s, inputs)
     # states.assign_dict_values(state_vals)
-    with brainscale.stop_param_gradients():
+    with braintrace.stop_param_gradients():
         D = np.asarray(jax.jacrev(f, argnums=0)(s, inputs))
         states.assign_dict_values(state_vals)
         # diagonal = brainstate.transform.vector_grad(f, argnums=0)(s, inputs)
@@ -344,7 +344,7 @@ def _compare_jac_one_step(model: brainstate.nn.Module, idx, inp):
 
     # compute jacobian and diagonal
     jac = jacobian()
-    with brainscale.stop_param_gradients():
+    with braintrace.stop_param_gradients():
         diag = jacobian()
     cos = cosine_similarity(jac, diag)
 
@@ -383,7 +383,7 @@ def _compare_jac_all_steps(model: brainstate.nn.Module, inputs):
     # compute jacobian and diagonal
     brainstate.nn.init_all_states(model)
     jac, spks = jacobian()
-    with brainscale.stop_param_gradients():
+    with braintrace.stop_param_gradients():
         brainstate.nn.init_all_states(model)
         diag, _ = jacobian()
     cos = cosine_similarity(jac, diag)

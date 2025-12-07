@@ -57,7 +57,7 @@ def define_device_args() -> argparse.Namespace:
 
 define_device_args()
 
-import brainscale
+import braintrace
 import braintools
 import jax
 
@@ -187,7 +187,7 @@ def compare_gradient_of_five_layer_net_by_random_data():
 
     def compute_etrace_grad(inputs, targets):
         # etrace = nn.DiagExpSmOnAlgorithm(partial(loss_fun, target=targets), decay_or_rank=n_rank)
-        etrace = brainscale.ParamDimVjpAlgorithm(partial(loss_fun, target=targets), )
+        etrace = braintrace.ParamDimVjpAlgorithm(partial(loss_fun, target=targets), )
         etrace.compile_graph(0, jax.ShapeDtypeStruct((n_batch, n_in), brainstate.environ.dftype()))
         f_grad = brainstate.transform.grad(etrace, grad_states=weights)
 
@@ -264,7 +264,7 @@ class ETraceDenseNetV2(NetWithMemSpkRegularize):
             self.rec_layers.append(rec)
 
         # output layer
-        self.out = brainscale.nn.LeakyRateReadout(
+        self.out = braintrace.nn.LeakyRateReadout(
             in_size=n_rec,
             out_size=n_out,
             tau=tau_o,
@@ -340,9 +340,9 @@ def _compare(
         loss_fn = Model(target=targets)
 
         if method == 'diag_expsm':
-            etrace = brainscale.IODimVjpAlgorithm(loss_fn, decay_or_rank=n_rank)
+            etrace = braintrace.IODimVjpAlgorithm(loss_fn, decay_or_rank=n_rank)
         elif method == 'diag':
-            etrace = brainscale.ParamDimVjpAlgorithm(loss_fn)
+            etrace = braintrace.ParamDimVjpAlgorithm(loss_fn)
         else:
             raise ValueError(f'Unknown method {method}')
         etrace.compile_graph(0, jax.ShapeDtypeStruct([model.n_in], brainstate.environ.dftype()))

@@ -33,7 +33,7 @@ import jax.numpy as jnp
 import tonic
 
 import braintools
-import brainscale
+import braintrace
 import brainstate
 from data import get_dvs128_test_dataset, get_dvs128_train_val
 from model import Network, FiringRateState
@@ -186,9 +186,9 @@ class Trainer(brainstate.util.PrettyObject):
         # initialize the online learning model
         model = brainstate.nn.EnvironContext(self.model, fit=True)
         if self.args.method == 'es-d-rtrl':
-            model = brainscale.IODimVjpAlgorithm(model, self.args.etrace_decay, vjp_method=self.args.vjp_method)
+            model = braintrace.IODimVjpAlgorithm(model, self.args.etrace_decay, vjp_method=self.args.vjp_method)
         elif self.args.method == 'd-rtrl':
-            model = brainscale.ParamDimVjpAlgorithm(model, vjp_method=self.args.vjp_method)
+            model = braintrace.ParamDimVjpAlgorithm(model, vjp_method=self.args.vjp_method)
         else:
             raise ValueError(f'Unknown online learning methods: {self.args.method}.')
 

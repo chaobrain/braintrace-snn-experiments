@@ -14,7 +14,7 @@
 # ==============================================================================
 
 import brainpy
-import brainscale
+import braintrace
 import brainstate
 import braintools
 import jax
@@ -36,7 +36,7 @@ class Linear(brainstate.nn.Module):
         # parameters
         param = dict(weight=w_init([n_in, n_out]), bias=b_init([n_out]))
         # operations
-        self.weight_op = brainscale.ETraceParam(param, brainscale.MatMulOp())
+        self.weight_op = braintrace.ETraceParam(param, braintrace.MatMulOp())
 
     def update(self, x):
         # call the model by ".execute" the weight_op
@@ -110,7 +110,7 @@ class LIF_Delta_Net(brainstate.nn.Module):
         super().__init__()
         self.neu = LIF(n_rec, tau=tau_mem, V_th=V_th)
         self.syn = brainpy.state.DeltaProj(comm=Linear(n_in + n_rec, n_rec), post=self.neu)
-        self.out = brainscale.nn.LeakyRateReadout(n_rec, n_out, tau=5.0)
+        self.out = braintrace.nn.LeakyRateReadout(n_rec, n_out, tau=5.0)
 
     def update(self, i, spk):
         with brainstate.environ.context(i=i, t=i * brainstate.environ.get_dt()):
@@ -133,11 +133,11 @@ brainstate.nn.init_all_states(net)
 # online learning algorithm
 method = 'es-diag'  # or 'diag', 'hybrid'
 if method == 'es-diag':
-    model = brainscale.ES_D_RTRL(net, decay_or_rank=0.98)
+    model = braintrace.ES_D_RTRL(net, decay_or_rank=0.98)
 elif method == 'diag':
-    model = brainscale.D_RTRL(net)
+    model = braintrace.D_RTRL(net)
 elif method == 'hybrid':
-    model = brainscale.HybridDimVjpAlgorithm(net, decay_or_rank=0.98)
+    model = braintrace.HybridDimVjpAlgorithm(net, decay_or_rank=0.98)
 else:
     raise ValueError(f'Unknown online learning methods: {method}.')
 

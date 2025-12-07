@@ -58,7 +58,7 @@ if platform.system() == 'Linux':
 
 import jax
 from fast_histogram import histogram1d
-import brainscale
+import braintrace
 import brainstate
 import braintools
 import numpy as np
@@ -144,7 +144,7 @@ def _compare(
             )
         )
         brainstate.nn.init_all_states(model, inputs.shape[1])
-        etrace_model = brainscale.DiagTruncatedAlgorithm(model, n_truncation=inputs.shape[0])
+        etrace_model = braintrace.DiagTruncatedAlgorithm(model, n_truncation=inputs.shape[0])
         etrace_model.compile_graph(0, inputs[0])
 
         def _step_to_run(ri, inp):
