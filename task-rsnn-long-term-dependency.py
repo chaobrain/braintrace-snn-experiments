@@ -16,7 +16,7 @@
 
 from typing import Callable, Iterable, Union
 
-import brainscale
+import braintrace
 import brainstate
 import braintools
 import brainunit as u
@@ -114,7 +114,7 @@ class GifNet(brainstate.nn.Module):
         self.n_out = n_out
 
         # 模型层
-        self.ir2r = brainscale.nn.Linear(n_in + n_rec, n_rec, w_init=w, b_init=braintools.init.ZeroInit(unit=u.mA))
+        self.ir2r = braintrace.nn.Linear(n_in + n_rec, n_rec, w_init=w, b_init=braintools.init.ZeroInit(unit=u.mA))
         self.exp = brainpy.state.Expon(n_rec, tau=tau_syn, g_initializer=braintools.init.ZeroInit(unit=u.mA))
         self.r = GIF(
             n_rec,
@@ -124,7 +124,7 @@ class GifNet(brainstate.nn.Module):
             tau=tau_neu,
             tau_I2=brainstate.random.uniform(100. * u.ms, tau_I2 * 1.5, n_rec),
         )
-        self.out = brainscale.nn.LeakyRateReadout(n_rec, n_out, tau=tau_o, w_init=braintools.init.KaimingNormal())
+        self.out = braintrace.nn.LeakyRateReadout(n_rec, n_out, tau=tau_o, w_init=braintools.init.KaimingNormal())
 
     def update(self, spikes):
         cond = self.ir2r(u.math.concatenate([spikes, self.r.get_spike()], axis=-1))
@@ -401,7 +401,7 @@ class OnlineTrainer(Trainer):
         weights = self.target.states().subset(brainstate.ParamState)
 
         # initialize the online learning model
-        model = brainscale.IODimVjpAlgorithm(self.target, self.decay_or_rank)
+        model = braintrace.IODimVjpAlgorithm(self.target, self.decay_or_rank)
 
         # initialize the states
         @brainstate.transform.vmap_new_states(state_tag='new', axis_size=inputs.shape[1])
@@ -501,12 +501,12 @@ class LIF_Delta_Net(brainstate.nn.Module):
         ff_init: Callable = braintools.init.KaimingNormal(ff_scale, unit=u.mV)
         w_init = u.math.concatenate([ff_init([n_in, n_rec]), rec_init([n_rec, n_rec])], axis=0)
         self.syn = brainpy.state.DeltaProj(
-            comm=brainscale.nn.Linear(n_in + n_rec, n_rec,
+            comm=braintrace.nn.Linear(n_in + n_rec, n_rec,
                                       w_init=w_init,
                                       b_init=braintools.init.ZeroInit(unit=u.mV)),
             post=self.neu
         )
-        self.out = brainscale.nn.LeakyRateReadout(in_size=n_rec,
+        self.out = braintrace.nn.LeakyRateReadout(in_size=n_rec,
                                                   out_size=n_out,
                                                   tau=tau_o,
                                                   w_init=braintools.init.KaimingNormal())

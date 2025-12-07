@@ -16,7 +16,7 @@
 from typing import Callable
 
 import brainpy
-import brainscale
+import braintrace
 import brainstate
 import braintools
 import brainunit as u
@@ -126,7 +126,7 @@ class GIF(brainpy.state.Neuron):
         return spk
 
 
-class Linear(brainscale.nn.Linear):
+class Linear(braintrace.nn.Linear):
     def __init__(self, n_in, n_out, w_init=None, sparsity: float = 0., sign: float = 1.):
         if sparsity > 0.:
             w_mask = brainstate.random.rand(n_in, n_out, dtype=jnp.float32) < sparsity
@@ -221,7 +221,7 @@ class _SNNEINet(brainstate.nn.Module):
         )
 
         # output
-        self.out = brainscale.nn.LeakyRateReadout(n_rec, n_out, tau=args.tau_out)
+        self.out = braintrace.nn.LeakyRateReadout(n_rec, n_out, tau=args.tau_out)
 
     def update(self, spk):
         e_sps, i_sps = jnp.split(self.pop.get_spike(), [self.n_exc], axis=-1)

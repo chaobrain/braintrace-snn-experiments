@@ -20,8 +20,8 @@ import platform
 
 # 吴思Lab brainpy-tower1-brainpy
 if platform.platform() == 'Linux-6.8.0-48-generic-x86_64-with-glibc2.35':
-    data_dir = '/home/brainpy/codes/projects/brainscale_event_rnn/event_gru/dvs_gesture/data'
-    cache_dir = '/home/brainpy/codes/projects/brainscale_event_rnn/event_gru/dvs_gesture/cache'
+    data_dir = '/home/brainpy/codes/projects/braintrace_event_rnn/event_gru/dvs_gesture/data'
+    cache_dir = '/home/brainpy/codes/projects/braintrace_event_rnn/event_gru/dvs_gesture/cache'
 
 # 吴思Lab A100
 elif platform.platform() == 'Linux-6.8.0-52-generic-x86_64-with-glibc2.35':

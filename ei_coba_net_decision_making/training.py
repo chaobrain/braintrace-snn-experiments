@@ -31,7 +31,7 @@ if not platform.platform().startswith('Windows'):
 
 import brainstate
 import braintools
-import brainscale
+import braintrace
 import brainunit as u
 import jax
 import jax.numpy as jnp
@@ -112,18 +112,18 @@ class Trainer:
 
         # initialize the online learning model
         if self.args.method == 'esd-rtrl':
-            model = brainscale.IODimVjpAlgorithm(
+            model = braintrace.IODimVjpAlgorithm(
                 self.target,
                 self.args.etrace_decay,
                 vjp_method=self.args.vjp_method,
             )
         elif self.args.method == 'd-rtrl':
-            model = brainscale.ParamDimVjpAlgorithm(
+            model = braintrace.ParamDimVjpAlgorithm(
                 self.target,
                 vjp_method=self.args.vjp_method,
             )
         elif self.args.method == 'hybrid':
-            model = brainscale.HybridDimVjpAlgorithm(
+            model = braintrace.HybridDimVjpAlgorithm(
                 self.target,
                 self.args.etrace_decay,
                 vjp_method=self.args.vjp_method,
