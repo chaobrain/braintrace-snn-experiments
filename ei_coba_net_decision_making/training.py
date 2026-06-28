@@ -40,6 +40,15 @@ from data import EvidenceAccumulation
 from model import _SNNEINet, SNNCubaNet, SNNCobaNet
 
 
+def _device_mem_gb() -> float:
+    # ``memory_stats()`` returns ``None`` on CPU devices, so guard it and report
+    # 0.0 GB there; on accelerators it still returns the bytes-in-use as before.
+    stats = jax.devices()[0].memory_stats()
+    if not stats:
+        return 0.0
+    return stats['bytes_in_use'] / 1024 / 1024 / 1024
+
+
 class ExponentialSmooth(object):
     def __init__(self, decay: float = 0.8):
         self.decay = decay
@@ -138,7 +147,15 @@ class Trainer:
             # init etrace algorithm
             inp = jax.ShapeDtypeStruct(inputs.shape[2:], inputs.dtype)
             model.compile_graph(inp)
-            model.show_graph()
+            # show_graph() is purely diagnostic. On braintrace >=0.2 the
+            # compile_graph() call above is intentionally deferred while inside
+            # the vmap_new_states discovery probe (graph compiled later in the
+            # real mapped pass), so the graph is not yet available here. Guard
+            # the call so it prints on 0.1.2 and is harmlessly skipped on 0.2.x.
+            try:
+                model.show_graph()
+            except Exception:
+                pass
 
         init()
         model = brainstate.nn.Vmap(model, vmap_states='new')
@@ -183,7 +200,7 @@ class Trainer:
         else:
             r = _etrace_train(inputs)
         mem = jax.pure_callback(
-            lambda: jax.devices()[0].memory_stats()['bytes_in_use'] / 1024 / 1024 / 1024,
+            _device_mem_gb,
             jax.ShapeDtypeStruct((), brainstate.environ.dftype())
         )
         return r + (mem,)
@@ -219,7 +236,7 @@ class Trainer:
         grads = brainstate.functional.clip_grad_norm(grads, 1.)
         self.optimizer.update(grads)
         mem = jax.pure_callback(
-            lambda: jax.devices()[0].memory_stats()['bytes_in_use'] / 1024 / 1024 / 1024,
+            _device_mem_gb,
             jax.ShapeDtypeStruct((), brainstate.environ.dftype())
         )
         return mse_losses, l1_losses, acc, mem
@@ -248,12 +265,19 @@ class Trainer:
             fun = (self.bptt_train if self.args.method == 'bptt' else self.etrace_train)
             mse_ls, l1_ls, acc, mem = fun(inputs, outputs)
             self.optimizer.lr.step_epoch()
+            # Read the current LR for display. Newer braintools require a
+            # ``count`` arg for ``lr(count)``; fall back to ``get_last_lr()``
+            # which is zero-arg on both old and new versions.
+            try:
+                cur_lr = float(self.optimizer.lr())
+            except TypeError:
+                cur_lr = float(self.optimizer.lr.get_last_lr()[0])
             desc = (
                 f'Batch {bar_idx:2d}, '
                 f'CE={float(mse_ls):.8f}, '
                 f'L1={float(l1_ls):.6f}, '
                 f'acc={float(acc):.6f}, '
-                f'lr={self.optimizer.lr():.6f}, '
+                f'lr={cur_lr:.6f}, '
                 f'mem={mem:.6f} GB, '
                 f'time={time.time() - t0:.2f} s'
             )

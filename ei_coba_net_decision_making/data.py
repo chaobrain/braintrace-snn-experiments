@@ -116,12 +116,15 @@ class EvidenceAccumulation:
                 # X[i_seq:i_seq + t_cue, i_start: i_start + 25] = fr
                 X = jax.lax.dynamic_update_slice(X, update, (i_seq, i_start))
 
-            X = u.Quantity(X)
-            # recall cue
-            X[-t_recall:, self.feat_neurons['recall']] = self.feat_fr['recall'] * dt
+            # recall cue (dimensionless spike probabilities; use functional
+            # .at[].set() so it works whether or not saiunit allows in-place
+            # mutation of a traced Quantity)
+            recall = self.feat_neurons['recall']
+            X = X.at[-t_recall:, recall].set(self.feat_fr['recall'] * dt)
 
             # background noise
-            X[:, self.feat_neurons['noise']] = self.feat_fr['noise'] * dt
+            noise = self.feat_neurons['noise']
+            X = X.at[:, noise].set(self.feat_fr['noise'] * dt)
 
             # generate inputs and targets
             # X = u.math.asarray(rng.rand(*X.shape) < X, dtype=float)
